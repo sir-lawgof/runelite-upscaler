@@ -82,6 +82,8 @@ import com.runeliteupscaler.targets.RenderTargets;
 import com.runeliteupscaler.targets.Size;
 import com.runeliteupscaler.targets.Texture;
 import com.runeliteupscaler.upscale.BilinearUpscaler;
+import com.runeliteupscaler.upscale.Fsr1Upscaler;
+import com.runeliteupscaler.upscale.UpscalerBackend;
 import com.runeliteupscaler.upscale.FrameInputs;
 import com.runeliteupscaler.upscale.GpuCaps;
 import com.runeliteupscaler.upscale.Upscaler;
@@ -376,9 +378,9 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 				lwjglInitted = true;
 
-				// A-04: backends in fallback order. Step 1 has only bilinear (S1-05); FSR 1 is added above it.
+				// A-04: backends in fallback order: FSR 1 (S1-06), then bilinear (S1-05) as the final fallback
 				gpuCaps = new GpuCaps(glGetString(GL_RENDERER), glGetString(GL_VERSION), glCapabilities.OpenGL43);
-				upscalerChain = new UpscalerChain(List.of(new BilinearUpscaler()));
+				upscalerChain = new UpscalerChain(List.of(new Fsr1Upscaler(), new BilinearUpscaler()));
 				selectUpscaler();
 
 				checkGLErrors();
@@ -608,6 +610,17 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
+					}
+				});
+			}
+			else if (configChanged.getKey().equals("upscalerBackend"))
+			{
+				// S1-13, G-33: switch backend live
+				clientThread.invokeLater(() ->
+				{
+					if (upscalerChain != null)
+					{
+						selectUpscaler();
 					}
 				});
 			}
@@ -981,7 +994,9 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		displayHeight = Math.max(1, getScaledValue(transform.getScaleY(), renderViewportHeight));
 
 		// S1-02, A-03: render resolution = display viewport size x scale
-		final int scalePercent = config.renderScale().percent(config.customRenderScale());
+		// S1-13: backend Off renders at native resolution (G-30)
+		final int scalePercent = config.upscalerBackend() == UpscalerBackend.OFF ? 100
+			: config.renderScale().percent(config.customRenderScale());
 		final int renderWidth = RenderSize.scale(displayWidth, scalePercent);
 		final int renderHeight = RenderSize.scale(displayHeight, scalePercent);
 
@@ -1159,6 +1174,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 			// Stage 2, upscale pass (A-01, S1-05). S1-04: the color input is resolved to single-sample at
 			// render resolution first, since a multisampled framebuffer can't be blitted to a different size.
 			frameInputs.color = renderTargets.resolveColor();
+			frameInputs.sharpness = config.upscalerSharpness() / 100f; // S1-08, G-33: read live each frame
 			Texture out = renderTargets.output();
 			Upscaler upscaler = upscalerChain.active();
 			boolean upscaled = false;
@@ -1210,8 +1226,9 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	 */
 	private void selectUpscaler()
 	{
-		// No backend setting yet (S1-13): start at the top of the fallback order
-		Upscaler upscaler = upscalerChain.select("", gpuCaps);
+		// S1-13: start at the configured backend (Off has none; the scale is forced to 100% instead)
+		String requested = config.upscalerBackend().upscalerName();
+		Upscaler upscaler = upscalerChain.select(requested == null ? "" : requested, gpuCaps);
 		String reason = upscalerChain.fallbackReason();
 		if (upscaler == null)
 		{
@@ -1224,6 +1241,8 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		{
 			upscaler.resize(new Size(renderTargets.renderWidth(), renderTargets.renderHeight()),
 				new Size(renderTargets.displayWidth(), renderTargets.displayHeight()));
+			// resize may bind its own framebuffers; draw() expects the default one bound between frames
+			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		}
 	}
 

@@ -31,6 +31,7 @@ import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
 import net.runelite.client.config.Units;
 import com.runeliteupscaler.targets.ScalePreset;
+import com.runeliteupscaler.upscale.UpscalerBackend;
 import static com.runeliteupscaler.renderer.GpuPlugin.MAX_DISTANCE;
 import static com.runeliteupscaler.renderer.GpuPlugin.MAX_FOG_DEPTH;
 import com.runeliteupscaler.renderer.config.AntiAliasingMode;
@@ -50,6 +51,35 @@ public interface GpuPluginConfig extends Config
 		position = 0
 	)
 	String upscalingSection = "upscaling";
+
+	@ConfigItem(
+		keyName = "upscalerBackend",
+		name = "Upscaler",
+		description = "How the scene is upscaled. Off renders at native resolution. FSR 1 needs OpenGL 4.3 and falls back to Bilinear if unavailable.",
+		position = -1,
+		section = upscalingSection
+	)
+	default UpscalerBackend upscalerBackend()
+	{
+		return UpscalerBackend.FSR1;
+	}
+
+	@Range(
+		min = 0,
+		max = 100
+	)
+	@Units(Units.PERCENT)
+	@ConfigItem(
+		keyName = "upscalerSharpness",
+		name = "Sharpness",
+		description = "FSR 1 RCAS sharpening (S1-08). 100% is sharpest; 0% turns sharpening off. Default 90% = AMD's recommended 0.2 stops.",
+		position = 3,
+		section = upscalingSection
+	)
+	default int upscalerSharpness()
+	{
+		return 90; // S1-08: 2 x (1 - 0.9) = 0.2 stops, AMD's recommended default
+	}
 
 	@ConfigItem(
 		keyName = "renderScale",
