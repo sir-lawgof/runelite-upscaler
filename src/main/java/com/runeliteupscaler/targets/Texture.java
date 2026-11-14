@@ -24,6 +24,7 @@
  */
 package com.runeliteupscaler.targets;
 
+import com.runeliteupscaler.debug.GlObjects;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
@@ -57,6 +58,7 @@ public final class Texture
 	public static Texture create(String name, int width, int height, TargetFormat format)
 	{
 		int tex = glGenTextures();
+		GlObjects.created(GlObjects.Type.TEXTURE, 1); // S1-15
 		glBindTexture(GL_TEXTURE_2D, tex);
 		glTexImage2D(GL_TEXTURE_2D, 0, format.textureInternalFormat, width, height, 0, GL_RGBA, format.allocationType(), 0);
 		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
@@ -66,6 +68,7 @@ public final class Texture
 		glBindTexture(GL_TEXTURE_2D, 0);
 
 		int fbo = glGenFramebuffers();
+		GlObjects.created(GlObjects.Type.FRAMEBUFFER, 1);
 		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
 		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
 
@@ -84,6 +87,8 @@ public final class Texture
 	{
 		glDeleteFramebuffers(fbo);
 		glDeleteTextures(id);
+		GlObjects.deleted(GlObjects.Type.FRAMEBUFFER, 1);
+		GlObjects.deleted(GlObjects.Type.TEXTURE, 1);
 	}
 
 	public Size size()

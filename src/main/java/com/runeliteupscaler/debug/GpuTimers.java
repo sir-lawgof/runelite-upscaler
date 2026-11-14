@@ -91,6 +91,7 @@ public final class GpuTimers implements AutoCloseable
 				{
 					glGenQueries(startQuery[f]);
 					glGenQueries(endQuery[f]);
+					GlObjects.created(GlObjects.Type.QUERY, 2 * STAGES); // S1-15
 				}
 				created = true;
 			}
@@ -176,6 +177,7 @@ public final class GpuTimers implements AutoCloseable
 			{
 				glDeleteQueries(startQuery[f]);
 				glDeleteQueries(endQuery[f]);
+				GlObjects.deleted(GlObjects.Type.QUERY, 2 * STAGES);
 			}
 			created = false;
 		}

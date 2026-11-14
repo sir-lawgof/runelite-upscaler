@@ -24,6 +24,7 @@
  */
 package com.runeliteupscaler.targets;
 
+import com.runeliteupscaler.debug.GlObjects;
 import static org.lwjgl.opengl.GL33C.*;
 
 /**
@@ -94,14 +95,17 @@ public final class RenderTargets implements AutoCloseable
 		}
 
 		sceneFbo = glGenFramebuffers();
+		GlObjects.created(GlObjects.Type.FRAMEBUFFER, 1); // S1-15
 		glBindFramebuffer(GL_FRAMEBUFFER, sceneFbo);
 
 		sceneColorRbo = glGenRenderbuffers();
+		GlObjects.created(GlObjects.Type.RENDERBUFFER, 1);
 		glBindRenderbuffer(GL_RENDERBUFFER, sceneColorRbo);
 		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format.sceneInternalFormat, renderWidth, renderHeight);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, sceneColorRbo);
 
 		sceneDepthRbo = glGenRenderbuffers();
+		GlObjects.created(GlObjects.Type.RENDERBUFFER, 1);
 		glBindRenderbuffer(GL_RENDERBUFFER, sceneDepthRbo);
 		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, SCENE_DEPTH_FORMAT, renderWidth, renderHeight);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepthRbo);
@@ -208,16 +212,19 @@ public final class RenderTargets implements AutoCloseable
 		if (sceneFbo != 0)
 		{
 			glDeleteFramebuffers(sceneFbo);
+			GlObjects.deleted(GlObjects.Type.FRAMEBUFFER, 1);
 			sceneFbo = 0;
 		}
 		if (sceneColorRbo != 0)
 		{
 			glDeleteRenderbuffers(sceneColorRbo);
+			GlObjects.deleted(GlObjects.Type.RENDERBUFFER, 1);
 			sceneColorRbo = 0;
 		}
 		if (sceneDepthRbo != 0)
 		{
 			glDeleteRenderbuffers(sceneDepthRbo);
+			GlObjects.deleted(GlObjects.Type.RENDERBUFFER, 1);
 			sceneDepthRbo = 0;
 		}
 		renderWidth = renderHeight = displayWidth = displayHeight = samples = 0;

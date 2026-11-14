@@ -75,6 +75,7 @@ import net.runelite.client.plugins.PluginManager;
 import com.runeliteupscaler.renderer.config.AntiAliasingMode;
 import com.runeliteupscaler.renderer.config.UIScalingMode;
 import com.runeliteupscaler.renderer.template.Template;
+import com.runeliteupscaler.debug.GlObjects;
 import com.runeliteupscaler.debug.GpuTimers;
 import com.runeliteupscaler.debug.RenderStats;
 import com.runeliteupscaler.debug.UpscalerDebugOverlay;
@@ -199,6 +200,10 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private final RenderStats renderStats = new RenderStats();
 	// A-06: GPU time per stage; makes no GL calls unless the debug overlay is on
 	private final GpuTimers gpuTimers = new GpuTimers(renderStats);
+	// S1-15: GL_NVX_gpu_memory_info, read about once a second while the overlay is shown
+	private static final int GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX = 0x9048;
+	private static final int GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX = 0x9049;
+	private int gpuMemoryFrame;
 	private UpscalerDebugOverlay debugOverlay;
 
 	@Inject
@@ -568,6 +573,17 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				}
 				gpuTimers.close(); // A-06, G-11
 				renderTargets.close(); // A-02, G-11
+
+				// S1-15, G-11: everything this plugin's code created must be gone by now
+				int live = GlObjects.total();
+				if (live != 0)
+				{
+					log.warn("GL objects still live after shutdown: {} ({})", live, GlObjects.breakdown());
+				}
+				else
+				{
+					log.debug("All upscaler GL objects freed on shutdown");
+				}
 			}
 
 			if (awtContext != null)
@@ -1241,6 +1257,27 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/**
+	 * S1-15: device-wide GPU memory in use (NVIDIA only, via GL_NVX_gpu_memory_info), for spotting leaks on the
+	 * debug overlay. Includes other processes, so watch the trend, not the absolute value.
+	 */
+	private void updateGpuMemory()
+	{
+		if (!config.upscalerDebugOverlay() || !glCapabilities.GL_NVX_gpu_memory_info)
+		{
+			renderStats.gpuMemUsedMb = -1;
+			return;
+		}
+		if (gpuMemoryFrame++ % 60 != 0)
+		{
+			return;
+		}
+		int totalKb = glGetInteger(GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX);
+		int freeKb = glGetInteger(GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX);
+		renderStats.gpuMemTotalMb = totalKb / 1024;
+		renderStats.gpuMemUsedMb = (totalKb - freeKb) / 1024;
+	}
+
+	/**
 	 * A-04: pick the backend (best supported, skipping failed ones) and size it to the current targets.
 	 */
 	private void selectUpscaler()
@@ -1678,6 +1715,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		gpuTimers.end(GpuTimers.Stage.UI);
 		gpuTimers.endFrame();
 		gpuTimers.setEnabled(config.upscalerDebugOverlay()); // G-31: only time while the overlay is shown
+		updateGpuMemory();
 
 		try
 		{

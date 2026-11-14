@@ -64,6 +64,10 @@ public class UpscalerDebugOverlay extends OverlayPanel
 		line("Display", stats.displayWidth + " x " + stats.displayHeight);
 		line("MSAA", stats.msaaSamples > 0 ? stats.msaaSamples + "x" : "off");
 		line("Targets", stats.targetFormat);
+		// S1-15: leak checks. GL objects held by this plugin's code; GPU memory for the whole device.
+		line("GL objects", GlObjects.total() + " (" + GlObjects.breakdown() + ")");
+		line("GPU memory", stats.gpuMemUsedMb < 0 ? "n/a"
+			: stats.gpuMemUsedMb + " / " + stats.gpuMemTotalMb + " MB");
 		double[] gpu = stats.gpuMs;
 		if (gpu != null)
 		{

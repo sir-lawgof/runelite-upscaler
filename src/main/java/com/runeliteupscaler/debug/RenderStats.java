@@ -43,4 +43,7 @@ public final class RenderStats
 	public String targetFormat = "-";
 	/** A-06: smoothed GPU ms per {@link GpuTimers.Stage}, -1 = no result yet; null when timing is off */
 	public double[] gpuMs;
+	/** S1-15: GPU memory in use on the whole device (all processes), MB; -1 = not available (non-NVIDIA) */
+	public int gpuMemUsedMb = -1;
+	public int gpuMemTotalMb = -1;
 }

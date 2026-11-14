@@ -24,6 +24,7 @@
  */
 package com.runeliteupscaler.upscale;
 
+import com.runeliteupscaler.debug.GlObjects;
 import com.runeliteupscaler.renderer.template.Template;
 import com.runeliteupscaler.targets.Size;
 import com.runeliteupscaler.targets.Texture;
@@ -105,6 +106,7 @@ public final class Fsr1Upscaler implements Upscaler
 
 		// Core profile needs a bound VAO to draw, even with no vertex attributes
 		vao = glGenVertexArrays();
+		GlObjects.created(GlObjects.Type.VERTEX_ARRAY, 1); // S1-15
 	}
 
 	@Override
@@ -195,6 +197,7 @@ public final class Fsr1Upscaler implements Upscaler
 		if (vao != 0)
 		{
 			glDeleteVertexArrays(vao);
+			GlObjects.deleted(GlObjects.Type.VERTEX_ARRAY, 1);
 			vao = 0;
 		}
 		easuCon = null;
@@ -206,11 +209,13 @@ public final class Fsr1Upscaler implements Upscaler
 		if (easuProgram != 0)
 		{
 			glDeleteProgram(easuProgram);
+			GlObjects.deleted(GlObjects.Type.PROGRAM, 1);
 			easuProgram = 0;
 		}
 		if (rcasProgram != 0)
 		{
 			glDeleteProgram(rcasProgram);
+			GlObjects.deleted(GlObjects.Type.PROGRAM, 1);
 			rcasProgram = 0;
 		}
 	}

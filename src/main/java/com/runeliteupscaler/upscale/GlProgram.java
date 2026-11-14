@@ -24,6 +24,7 @@
  */
 package com.runeliteupscaler.upscale;
 
+import com.runeliteupscaler.debug.GlObjects;
 import com.runeliteupscaler.renderer.template.Template;
 import static org.lwjgl.opengl.GL33C.*;
 
@@ -55,6 +56,7 @@ final class GlProgram
 		}
 
 		int program = glCreateProgram();
+		GlObjects.created(GlObjects.Type.PROGRAM, 1); // S1-15
 		glAttachShader(program, vs);
 		glAttachShader(program, fs);
 		glLinkProgram(program);
@@ -67,6 +69,7 @@ final class GlProgram
 		{
 			String err = glGetProgramInfoLog(program);
 			glDeleteProgram(program);
+			GlObjects.deleted(GlObjects.Type.PROGRAM, 1);
 			throw new IllegalStateException("link failed (" + fragmentFile + "): " + err.trim());
 		}
 		return program;
