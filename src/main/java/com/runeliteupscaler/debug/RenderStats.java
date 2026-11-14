@@ -31,6 +31,8 @@ package com.runeliteupscaler.debug;
 public final class RenderStats
 {
 	public String backend = "-";
+	/** A-04, G-13: why better backends were skipped; empty if none were */
+	public String fallbackReason = "";
 	public int scalePercent;
 	public int renderWidth;
 	public int renderHeight;

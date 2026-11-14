@@ -79,6 +79,14 @@ import com.runeliteupscaler.debug.RenderStats;
 import com.runeliteupscaler.debug.UpscalerDebugOverlay;
 import com.runeliteupscaler.targets.RenderSize;
 import com.runeliteupscaler.targets.RenderTargets;
+import com.runeliteupscaler.targets.Size;
+import com.runeliteupscaler.targets.Texture;
+import com.runeliteupscaler.upscale.BilinearUpscaler;
+import com.runeliteupscaler.upscale.FrameInputs;
+import com.runeliteupscaler.upscale.GpuCaps;
+import com.runeliteupscaler.upscale.Upscaler;
+import com.runeliteupscaler.upscale.UpscalerChain;
+import java.util.List;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
@@ -177,6 +185,11 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	// Color the scene pass cleared to. The stock plugin cleared the whole canvas-sized FBO and blitted all
 	// of it, so the window outside the 3D viewport showed this color; draw() keeps that for parity (G-30).
 	private float sceneClearR, sceneClearG, sceneClearB;
+
+	// A-01, A-04, A-05: upscaler backends, selected in fallback order
+	private UpscalerChain upscalerChain;
+	private GpuCaps gpuCaps;
+	private final FrameInputs frameInputs = new FrameInputs();
 
 	// G-31: debug overlay
 	private final RenderStats renderStats = new RenderStats();
@@ -363,6 +376,11 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 				lwjglInitted = true;
 
+				// A-04: backends in fallback order. Step 1 has only bilinear (S1-05); FSR 1 is added above it.
+				gpuCaps = new GpuCaps(glGetString(GL_RENDERER), glGetString(GL_VERSION), glCapabilities.OpenGL43);
+				upscalerChain = new UpscalerChain(List.of(new BilinearUpscaler()));
+				selectUpscaler();
+
 				checkGLErrors();
 				if (log.isDebugEnabled() && glCapabilities.glDebugMessageControl != 0)
 				{
@@ -537,6 +555,11 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				shutdownProgram();
 				shutdownVao();
 				shutdownBuffers();
+				if (upscalerChain != null)
+				{
+					upscalerChain.close(); // A-07, G-11
+					upscalerChain = null;
+				}
 				renderTargets.close(); // A-02, G-11
 			}
 
@@ -978,11 +1001,17 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		}
 
 		// A-02: recreate the scene target when the render size or sample count changes (window resize, scale change)
-		if (renderTargets.ensure(renderWidth, renderHeight, aaSamples))
+		if (renderTargets.ensure(renderWidth, renderHeight, displayWidth, displayHeight, aaSamples))
 		{
 			log.debug("Scene target {}x{} ({}x MSAA) for display {}x{} at {}%",
 				renderWidth, renderHeight, aaSamples, displayWidth, displayHeight, scalePercent);
-			// Reset (as the stock initFbo did): read framebuffer back to the default
+			// A-02: new sizes also resize the backend and reset its history
+			Upscaler upscaler = upscalerChain.active();
+			if (upscaler != null)
+			{
+				upscaler.resize(new Size(renderWidth, renderHeight), new Size(displayWidth, displayHeight));
+			}
+			// Reset (as the stock initFbo did): framebuffers back to the default
 			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
 		}
 
@@ -990,8 +1019,10 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		glViewport(0, 0, renderWidth, renderHeight);
 
 		// G-31
-		renderStats.backend = renderWidth == displayWidth && renderHeight == displayHeight
-			? "Native (no upscale)" : "Bilinear blit";
+		Upscaler active = upscalerChain.active();
+		renderStats.backend = !renderTargets.isScaled() ? "Native (no upscale)"
+			: active != null ? active.name() : "none";
+		renderStats.fallbackReason = upscalerChain.fallbackReason();
 		renderStats.scalePercent = scalePercent;
 		renderStats.renderWidth = renderWidth;
 		renderStats.renderHeight = renderHeight;
@@ -1114,27 +1145,86 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 	private void blitSceneFbo()
 	{
-		// S1-02: place the render-resolution scene into the 3D viewport rectangle on the window.
-		final int renderWidth = renderTargets.width();
-		final int renderHeight = renderTargets.height();
-		final boolean scaled = renderWidth != displayWidth || renderHeight != displayHeight;
-
 		int defaultFbo = awtContext.getFramebuffer(false);
-		// S1-04: a multisampled framebuffer can't be blitted to a different size, so resolve at render resolution
-		// first. At native size, blit straight from the scene target (resolving in the blit) like the stock plugin.
-		int source = scaled ? renderTargets.resolvedColorFbo() : renderTargets.sceneFbo();
+
+		// Native size: blit straight from the scene target (resolving MSAA in the blit) with GL_NEAREST,
+		// exactly like the stock plugin (G-30).
+		int source = renderTargets.sceneFbo();
+		int sourceWidth = renderTargets.renderWidth();
+		int sourceHeight = renderTargets.renderHeight();
+		int filter = GL_NEAREST;
+
+		if (renderTargets.isScaled())
+		{
+			// Stage 2, upscale pass (A-01, S1-05). S1-04: the color input is resolved to single-sample at
+			// render resolution first, since a multisampled framebuffer can't be blitted to a different size.
+			frameInputs.color = renderTargets.resolveColor();
+			Texture out = renderTargets.output();
+			Upscaler upscaler = upscalerChain.active();
+			boolean upscaled = false;
+			if (upscaler != null)
+			{
+				try
+				{
+					upscaler.evaluate(frameInputs, out);
+					upscaled = true;
+				}
+				catch (RuntimeException ex)
+				{
+					// G-13: never crash or go black; drop to the next backend and log why
+					log.warn("Upscaler {} failed, falling back", upscaler.name(), ex);
+					upscalerChain.markFailed(upscaler);
+					selectUpscaler();
+				}
+			}
+
+			if (upscaled)
+			{
+				source = out.fbo;
+				sourceWidth = out.width;
+				sourceHeight = out.height;
+			}
+			else
+			{
+				// No working backend this frame: plain filtered stretch so the scene still shows (G-13)
+				source = frameInputs.color.fbo;
+				filter = GL_LINEAR;
+			}
+		}
+
+		// Stage 5, present: into the 3D viewport rectangle on the window (S1-02, S1-11)
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, source);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFbo);
-		// Temporary bilinear stretch until the Upscaler interface and bilinear backend exist (A-01, S1-05).
-		// GL_NEAREST at native size keeps the result identical to the stock plugin (G-30).
-		glBlitFramebuffer(0, 0, renderWidth, renderHeight,
+		glBlitFramebuffer(0, 0, sourceWidth, sourceHeight,
 			displayX, displayY, displayX + displayWidth, displayY + displayHeight,
-			GL_COLOR_BUFFER_BIT, scaled ? GL_LINEAR : GL_NEAREST);
+			GL_COLOR_BUFFER_BIT, filter);
 
 		// Reset
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, defaultFbo);
 
 		checkGLErrors();
+	}
+
+	/**
+	 * A-04: pick the backend (best supported, skipping failed ones) and size it to the current targets.
+	 */
+	private void selectUpscaler()
+	{
+		// No backend setting yet (S1-13): start at the top of the fallback order
+		Upscaler upscaler = upscalerChain.select("", gpuCaps);
+		String reason = upscalerChain.fallbackReason();
+		if (upscaler == null)
+		{
+			log.warn("No upscaler backend available: {}", reason);
+			return;
+		}
+
+		log.debug("Upscaler backend: {}{}", upscaler.name(), reason.isEmpty() ? "" : " (fallback: " + reason + ")");
+		if (renderTargets.sceneFbo() != 0)
+		{
+			upscaler.resize(new Size(renderTargets.renderWidth(), renderTargets.renderHeight()),
+				new Size(renderTargets.displayWidth(), renderTargets.displayHeight()));
+		}
 	}
 
 	@Override

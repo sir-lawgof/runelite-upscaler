@@ -28,12 +28,13 @@ import static org.lwjgl.opengl.GL33C.*;
 
 /**
  * A-02: owns the off-screen render targets: creation, resize and deletion.
- * <p>
- * S1-02: the scene target is sized to render resolution (A-03), not to the window. It has a
- * color and a depth renderbuffer, multisampled when MSAA is on (same formats as the stock GPU
- * plugin's scene FBO). S1-04: when MSAA is on, a single-sample color texture at render
- * resolution holds the resolved scene for the upscale pass.
- * <p>
+ * <ul>
+ * <li>S1-02: the scene target (color + depth renderbuffers, multisampled when MSAA is on, same formats
+ * as the stock GPU plugin's scene FBO) at render resolution (A-03).</li>
+ * <li>S1-05, A-05: when render and display sizes differ, a single-sample RGBA8 color texture at render
+ * resolution (the upscaler input; resolves MSAA, S1-04) and an RGBA8 output texture at display
+ * resolution (the upscaler output).</li>
+ * </ul>
  * All methods must be called on the thread that owns the GL context.
  */
 public final class RenderTargets implements AutoCloseable
@@ -41,36 +42,46 @@ public final class RenderTargets implements AutoCloseable
 	/** Scene color format. Kept as the stock GPU plugin's GL_RGBA for parity; S1-03 makes it configurable. */
 	private static final int SCENE_COLOR_FORMAT = GL_RGBA;
 	private static final int SCENE_DEPTH_FORMAT = GL_DEPTH_COMPONENT32F;
-	private static final int RESOLVE_COLOR_FORMAT = GL_RGBA8;
+	/** S1-03: RGBA8 for Step 1 */
+	private static final int COLOR_FORMAT = GL_RGBA8;
 
-	private int width;
-	private int height;
+	private int renderWidth;
+	private int renderHeight;
+	private int displayWidth;
+	private int displayHeight;
 	private int samples;
 
 	private int sceneFbo;
 	private int sceneColorRbo;
 	private int sceneDepthRbo;
 
-	private int resolveFbo;
-	private int resolveColorTex;
+	/** Render-res single-sample scene color; null at native size. */
+	private Texture color;
+	/** Display-res upscaler output; null at native size. */
+	private Texture output;
 
 	/**
-	 * A-02: make sure the targets exist with this size and sample count, recreating them if not.
-	 * Leaves GL_FRAMEBUFFER and GL_RENDERBUFFER bindings changed; the caller rebinds what it needs.
+	 * A-02: make sure the targets exist for these sizes and sample count, recreating them if not.
+	 * Leaves GL_FRAMEBUFFER, GL_RENDERBUFFER and GL_TEXTURE_2D bindings changed; the caller rebinds.
 	 *
 	 * @return true if the targets were (re)created
 	 */
-	public boolean ensure(int width, int height, int samples)
+	public boolean ensure(int renderWidth, int renderHeight, int displayWidth, int displayHeight, int samples)
 	{
-		if (sceneFbo != 0 && width == this.width && height == this.height && samples == this.samples)
+		if (sceneFbo != 0
+			&& renderWidth == this.renderWidth && renderHeight == this.renderHeight
+			&& displayWidth == this.displayWidth && displayHeight == this.displayHeight
+			&& samples == this.samples)
 		{
 			return false;
 		}
 
 		close();
 
-		this.width = width;
-		this.height = height;
+		this.renderWidth = renderWidth;
+		this.renderHeight = renderHeight;
+		this.displayWidth = displayWidth;
+		this.displayHeight = displayHeight;
 		this.samples = samples;
 
 		if (samples > 0)
@@ -87,54 +98,48 @@ public final class RenderTargets implements AutoCloseable
 
 		sceneColorRbo = glGenRenderbuffers();
 		glBindRenderbuffer(GL_RENDERBUFFER, sceneColorRbo);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, SCENE_COLOR_FORMAT, width, height);
+		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, SCENE_COLOR_FORMAT, renderWidth, renderHeight);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, sceneColorRbo);
 
 		sceneDepthRbo = glGenRenderbuffers();
 		glBindRenderbuffer(GL_RENDERBUFFER, sceneDepthRbo);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, SCENE_DEPTH_FORMAT, width, height);
+		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, SCENE_DEPTH_FORMAT, renderWidth, renderHeight);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepthRbo);
 
 		checkComplete("scene");
+		glBindRenderbuffer(GL_RENDERBUFFER, 0);
 
-		if (samples > 0)
+		if (isScaled())
 		{
-			resolveColorTex = glGenTextures();
-			glBindTexture(GL_TEXTURE_2D, resolveColorTex);
-			glTexImage2D(GL_TEXTURE_2D, 0, RESOLVE_COLOR_FORMAT, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-			glBindTexture(GL_TEXTURE_2D, 0);
-
-			resolveFbo = glGenFramebuffers();
-			glBindFramebuffer(GL_FRAMEBUFFER, resolveFbo);
-			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, resolveColorTex, 0);
-
-			checkComplete("resolve");
+			color = createTexture("color", renderWidth, renderHeight);
+			output = createTexture("output", displayWidth, displayHeight);
 		}
 
-		glBindRenderbuffer(GL_RENDERBUFFER, 0);
 		return true;
 	}
 
-	/**
-	 * S1-04: a single-sample framebuffer holding the scene color at render resolution.
-	 * With MSAA on, resolves the multisampled scene into it first. Leaves the read and draw
-	 * framebuffer bindings changed.
-	 */
-	public int resolvedColorFbo()
+	/** True when render and display sizes differ, so the upscale pass runs. */
+	public boolean isScaled()
 	{
-		if (samples == 0)
-		{
-			return sceneFbo;
-		}
+		return renderWidth != displayWidth || renderHeight != displayHeight;
+	}
 
+	/**
+	 * S1-05, S1-04: copy the scene color into the render-res color texture (resolving MSAA) and return it,
+	 * ready for the upscaler. Only valid when {@link #isScaled()}. Leaves read/draw framebuffers changed.
+	 */
+	public Texture resolveColor()
+	{
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, sceneFbo);
-		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, resolveFbo);
-		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height, GL_COLOR_BUFFER_BIT, GL_NEAREST);
-		return resolveFbo;
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, color.fbo);
+		glBlitFramebuffer(0, 0, renderWidth, renderHeight, 0, 0, renderWidth, renderHeight, GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		return color;
+	}
+
+	/** S1-05: the display-res upscaler output. Only valid when {@link #isScaled()}. */
+	public Texture output()
+	{
+		return output;
 	}
 
 	public int sceneFbo()
@@ -142,14 +147,24 @@ public final class RenderTargets implements AutoCloseable
 		return sceneFbo;
 	}
 
-	public int width()
+	public int renderWidth()
 	{
-		return width;
+		return renderWidth;
 	}
 
-	public int height()
+	public int renderHeight()
 	{
-		return height;
+		return renderHeight;
+	}
+
+	public int displayWidth()
+	{
+		return displayWidth;
+	}
+
+	public int displayHeight()
+	{
+		return displayHeight;
 	}
 
 	public int samples()
@@ -161,16 +176,11 @@ public final class RenderTargets implements AutoCloseable
 	@Override
 	public void close()
 	{
-		if (resolveFbo != 0)
-		{
-			glDeleteFramebuffers(resolveFbo);
-			resolveFbo = 0;
-		}
-		if (resolveColorTex != 0)
-		{
-			glDeleteTextures(resolveColorTex);
-			resolveColorTex = 0;
-		}
+		deleteTexture(color);
+		color = null;
+		deleteTexture(output);
+		output = null;
+
 		if (sceneFbo != 0)
 		{
 			glDeleteFramebuffers(sceneFbo);
@@ -186,7 +196,35 @@ public final class RenderTargets implements AutoCloseable
 			glDeleteRenderbuffers(sceneDepthRbo);
 			sceneDepthRbo = 0;
 		}
-		width = height = samples = 0;
+		renderWidth = renderHeight = displayWidth = displayHeight = samples = 0;
+	}
+
+	private static Texture createTexture(String name, int width, int height)
+	{
+		int tex = glGenTextures();
+		glBindTexture(GL_TEXTURE_2D, tex);
+		glTexImage2D(GL_TEXTURE_2D, 0, COLOR_FORMAT, width, height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_LINEAR);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+		glBindTexture(GL_TEXTURE_2D, 0);
+
+		int fbo = glGenFramebuffers();
+		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
+		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
+		checkComplete(name);
+
+		return new Texture(tex, fbo, width, height);
+	}
+
+	private static void deleteTexture(Texture t)
+	{
+		if (t != null)
+		{
+			glDeleteFramebuffers(t.fbo);
+			glDeleteTextures(t.id);
+		}
 	}
 
 	private static void checkComplete(String name)
