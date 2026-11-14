@@ -32,7 +32,6 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 import org.lwjgl.PointerBuffer;
-import org.lwjgl.system.Configuration;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.KHRExternalMemoryFd;
 import org.lwjgl.vulkan.KHRExternalMemoryWin32;
@@ -72,6 +71,13 @@ public final class VulkanDevice implements AutoCloseable
 {
 	private static final String VALIDATION_LAYER = "VK_LAYER_KHRONOS_validation";
 
+	/**
+	 * LWJGL system property for the per-thread MemoryStack size in KB (default 64). It is read once when LWJGL's
+	 * MemoryStack class loads, so it must be set before RuneLite starts; the developer launcher does that.
+	 * Needed because LWJGL's VkInstance constructor lists all device extensions on that stack (8.4, Q-08).
+	 */
+	public static final String STACK_SIZE_PROPERTY = "org.lwjgl.system.stackSize";
+
 	/** Result of {@link #create}: a device, or the reason there is none. */
 	public static final class Result
 	{
@@ -110,47 +116,6 @@ public final class VulkanDevice implements AutoCloseable
 	 */
 	public static Result create(String glDeviceUuidHex, InteropSupport.Platform platform, boolean wantValidation)
 	{
-		// LWJGL's VkInstance constructor lists every device extension of every GPU on the calling thread's
-		// MemoryStack (64 KB by default); a few hundred extensions x 260 bytes overflows it (8.4). Run creation on
-		// a short-lived thread whose stack is created bigger. The handles work from any thread afterwards.
-		final Result[] out = new Result[1];
-		Thread thread = new Thread(() ->
-		{
-			Integer previous = Configuration.STACK_SIZE.get(64);
-			Configuration.STACK_SIZE.set(Math.max(previous, INIT_STACK_KB));
-			try
-			{
-				MemoryStack.stackGet(); // this thread's stack is created now, with the bigger size
-			}
-			finally
-			{
-				Configuration.STACK_SIZE.set(previous);
-			}
-			out[0] = createOnThisThread(glDeviceUuidHex, platform, wantValidation);
-		}, "upscaler-vulkan-init");
-		thread.setDaemon(true);
-		thread.start();
-		try
-		{
-			thread.join(INIT_TIMEOUT_MS);
-		}
-		catch (InterruptedException ex)
-		{
-			Thread.currentThread().interrupt();
-		}
-		if (out[0] == null)
-		{
-			return new Result(null, "Vulkan device creation timed out");
-		}
-		return out[0];
-	}
-
-	/** KB of LWJGL MemoryStack for the creation thread */
-	private static final int INIT_STACK_KB = 1024;
-	private static final long INIT_TIMEOUT_MS = 15_000;
-
-	private static Result createOnThisThread(String glDeviceUuidHex, InteropSupport.Platform platform, boolean wantValidation)
-	{
 		VulkanDevice vd = new VulkanDevice();
 		try
 		{
@@ -167,6 +132,11 @@ public final class VulkanDevice implements AutoCloseable
 			// UnsatisfiedLinkError or IllegalStateException when the Vulkan loader is missing, and so on
 			log.warn("Vulkan device creation failed", ex);
 			vd.close();
+			if (ex instanceof OutOfMemoryError && String.valueOf(ex.getMessage()).contains("stack space"))
+			{
+				// LWJGL's VkInstance constructor lists every device extension on the 64 KB default MemoryStack (8.4)
+				return new Result(null, "LWJGL stack too small: start the JVM with -D" + STACK_SIZE_PROPERTY + "=1024");
+			}
 			return new Result(null, "Vulkan error: " + ex);
 		}
 	}
