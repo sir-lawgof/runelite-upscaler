@@ -19,6 +19,11 @@ def pluginMainClass = 'com.runeliteupscaler.UpscalerPluginTest'
 dependencies {
 	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
 
+	// S2-27, Q-02: RuneLite ships LWJGL 3.3.2 core/opengl/opencl but not the Vulkan bindings, so bundle them.
+	// Same version as RuneLite's core; not transitive, so the core comes only from RuneLite. On Windows/Linux this
+	// is Java bindings only (it loads the system Vulkan loader).
+	implementation('org.lwjgl:lwjgl-vulkan:3.3.2') { transitive = false }
+
 	compileOnly 'org.projectlombok:lombok:1.18.30'
 	annotationProcessor 'org.projectlombok:lombok:1.18.30'
 

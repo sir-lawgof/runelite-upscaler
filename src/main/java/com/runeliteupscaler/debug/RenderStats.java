@@ -54,6 +54,8 @@ public final class RenderStats
 	public float mipBias;
 	/** S2-21: GL side of the GL-Vulkan bridge */
 	public String interop = "-";
+	/** S2-20, S2-21: Vulkan side (device name and validation, or why not) */
+	public String vulkan = "off";
 	/** S1-03 */
 	public String targetFormat = "-";
 	/** A-06: smoothed GPU ms per {@link GpuTimers.Stage}, -1 = no result yet; null when timing is off */

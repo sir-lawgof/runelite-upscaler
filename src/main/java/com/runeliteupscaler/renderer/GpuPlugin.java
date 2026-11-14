@@ -100,6 +100,7 @@ import com.runeliteupscaler.upscale.Upscaler;
 import com.runeliteupscaler.upscale.UpscalerChain;
 import com.runeliteupscaler.upscale.Vec2;
 import com.runeliteupscaler.vkbridge.InteropSupport;
+import com.runeliteupscaler.vkbridge.VulkanDevice;
 import java.util.List;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.ClientUI;
@@ -215,6 +216,8 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private final CameraMotionPass cameraMotionPass = new CameraMotionPass(); // S2-06
 	private final HistoryReset historyReset = new HistoryReset(); // S2-08
 	private InteropSupport interop; // S2-20, S2-21
+	private VulkanDevice vulkanDevice; // S2-20, S2-21, S2-26: Vulkan side of the bridge (test setting for now)
+	private boolean vulkanFailed;
 	private int lastTargetDisplayWidth, lastTargetDisplayHeight;
 	// S2-09: last LOD bias set on the texture array (reapplied if the array is recreated)
 	private float lastMipBias;
@@ -417,6 +420,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					interop.driverUuid.isEmpty() ? "n/a" : interop.driverUuid,
 					interop.deviceLuid.isEmpty() ? "" : ", LUID " + interop.deviceLuid + " node mask " + interop.deviceNodeMask);
 				renderStats.interop = interop.supported ? "GL side OK" : interop.reason;
+				applyVulkanBridge(); // S2-20, S2-21: Vulkan side, if the test setting is on
 
 				// A-04: backends in fallback order: FSR 1 (S1-06), then bilinear (S1-05) as the final fallback
 				gpuCaps = new GpuCaps(glGetString(GL_RENDERER), glGetString(GL_VERSION), glCapabilities.OpenGL43);
@@ -605,6 +609,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				gpuTimers.close(); // A-06, G-11
 				debugViews.close(); // G-32, G-11
 				cameraMotionPass.close(); // S2-06, G-11
+				closeVulkanBridge(); // S2-26, G-11
 				temporalState.reset();
 				renderTargets.close(); // A-02, G-11
 
@@ -665,6 +670,17 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					if (client.getGameState() == GameState.LOGGED_IN)
 					{
 						client.setGameState(GameState.LOADING);
+					}
+				});
+			}
+			else if (configChanged.getKey().equals("vulkanBridgeTest"))
+			{
+				clientThread.invokeLater(() ->
+				{
+					if (lwjglInitted && interop != null)
+					{
+						vulkanFailed = false; // a toggle retries after a failure
+						applyVulkanBridge();
 					}
 				});
 			}
@@ -1412,6 +1428,60 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	 * S1-15: device-wide GPU memory in use (NVIDIA only, via GL_NVX_gpu_memory_info), for spotting leaks on the
 	 * debug overlay. Includes other processes, so watch the trend, not the absolute value.
 	 */
+	/**
+	 * S2-20, S2-21: create or destroy the Vulkan device to match the "Vulkan bridge (test)" setting.
+	 * Runs on the client thread. A failure is logged and shown, and not retried until the setting is toggled.
+	 */
+	private void applyVulkanBridge()
+	{
+		boolean want = config.vulkanBridgeTest();
+		if (!want)
+		{
+			closeVulkanBridge();
+			renderStats.vulkan = "off";
+			return;
+		}
+		if (vulkanDevice != null || vulkanFailed)
+		{
+			return;
+		}
+		if (!interop.supported)
+		{
+			vulkanFailed = true;
+			renderStats.vulkan = "GL side unsupported: " + interop.reason;
+			return;
+		}
+
+		long start = System.nanoTime();
+		String glUuid = interop.deviceUuids.isEmpty() ? "" : interop.deviceUuids.get(0);
+		VulkanDevice.Result result = VulkanDevice.create(glUuid, InteropSupport.Platform.current(), true);
+		long ms = (System.nanoTime() - start) / 1_000_000;
+		if (result.device == null)
+		{
+			vulkanFailed = true;
+			renderStats.vulkan = result.reason;
+			log.warn("Vulkan bridge device not created: {}", result.reason);
+			return;
+		}
+		vulkanDevice = result.device;
+		renderStats.vulkan = vulkanDevice.deviceName + ", UUID match, validation " + (vulkanDevice.validationEnabled ? "on" : "off");
+		log.info("Vulkan bridge device: {} (Vulkan {}), UUID {} matches GL, extensions {}, queue family {}, validation {}, created in {} ms",
+			vulkanDevice.deviceName, vulkanDevice.apiVersion, vulkanDevice.deviceUuid, vulkanDevice.enabledDeviceExtensions,
+			vulkanDevice.queueFamily(), vulkanDevice.validationEnabled ? "on" : "off (layer not installed)", ms);
+	}
+
+	/** S2-26: destroy the Vulkan device; validation reports leaked objects here. */
+	private void closeVulkanBridge()
+	{
+		if (vulkanDevice != null)
+		{
+			int messages = vulkanDevice.validationMessages();
+			vulkanDevice.close();
+			vulkanDevice = null;
+			log.info("Vulkan bridge device destroyed ({} validation messages during its lifetime)", messages);
+		}
+	}
+
 	private void updateGpuMemory()
 	{
 		if (!config.upscalerDebugOverlay() || !glCapabilities.GL_NVX_gpu_memory_info)

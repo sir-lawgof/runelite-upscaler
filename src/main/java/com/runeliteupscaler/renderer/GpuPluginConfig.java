@@ -176,6 +176,20 @@ public interface GpuPluginConfig extends Config
 		return false;
 	}
 
+	@ConfigItem(
+		keyName = "vulkanBridgeTest",
+		name = "Vulkan bridge (test)",
+		description = "Development option (S2-20, S2-21): create a Vulkan device on the same GPU as OpenGL, with the "
+			+ "extensions the GL-Vulkan bridge needs. Uses validation layers if the Vulkan SDK is installed. "
+			+ "Nothing is drawn with it yet; see the debug overlay and the log.",
+		position = 9,
+		section = upscalingSection
+	)
+	default boolean vulkanBridgeTest()
+	{
+		return false;
+	}
+
 	// ---- End of upscaler settings ----
 
 	@Range(
