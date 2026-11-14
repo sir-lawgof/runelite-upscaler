@@ -41,6 +41,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import javax.inject.Inject;
+import javax.swing.JOptionPane;
 import javax.swing.SwingUtilities;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.BufferProvider;
@@ -95,6 +96,9 @@ import org.lwjgl.system.Configuration;
 	configName = "UpscalerGpuPlugin",
 	description = "Offloads rendering to GPU",
 	tags = {"fog", "draw distance"},
+	// G-10, D-06: only one renderer may own DrawCallbacks. RuneLite turns the other plugin off
+	// when either side is enabled (117 HD also declares conflicts = "GPU").
+	conflicts = {"GPU", "117 HD"},
 	loadInSafeMode = false
 )
 @Slf4j
@@ -293,6 +297,15 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		mapUploader = new SceneUploader(renderCallbackManager);
 		clientThread.invoke(() ->
 		{
+			// G-10: refuse to start if another renderer already owns DrawCallbacks (for example a
+			// renderer plugin that does not declare a conflict with "GPU").
+			DrawCallbacks owner = client.getDrawCallbacks();
+			if (owner != null && owner != this)
+			{
+				refuseStart(owner);
+				return true;
+			}
+
 			try
 			{
 				fboScene = -1;
@@ -413,6 +426,38 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		});
 	}
 
+	// G-10: turn this plugin back off and tell the user which renderer is in the way.
+	private void refuseStart(DrawCallbacks owner)
+	{
+		String ownerName = owner.getClass().getName();
+		for (Plugin p : pluginManager.getPlugins())
+		{
+			if (p == owner)
+			{
+				ownerName = p.getName();
+				break;
+			}
+		}
+
+		log.warn("Not starting Upscaler GPU: renderer {} already owns DrawCallbacks", ownerName);
+		final String message = "Upscaler GPU was not started because another renderer is active: "
+			+ ownerName + ".\nTurn that plugin off, then turn Upscaler GPU on again.";
+
+		SwingUtilities.invokeLater(() ->
+		{
+			try
+			{
+				pluginManager.setPluginEnabled(this, false);
+				pluginManager.stopPlugin(this);
+			}
+			catch (PluginInstantiationException ex)
+			{
+				log.error("error stopping plugin", ex);
+			}
+			JOptionPane.showMessageDialog(client.getCanvas(), message, "Upscaler GPU", JOptionPane.WARNING_MESSAGE);
+		});
+	}
+
 	private void setupGpuFlags()
 	{
 		int cpus = Runtime.getRuntime().availableProcessors();
@@ -446,10 +491,15 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	{
 		clientThread.invoke(() ->
 		{
-			client.setGpuFlags(0);
-			client.setDrawCallbacks(null);
-			client.setUnlockedFps(false);
-			client.setExpandedMapLoading(0);
+			// G-10: only reset the client's renderer state if this plugin owns it, so a refused
+			// start (or a stop after another renderer took over) does not break the active renderer.
+			if (client.getDrawCallbacks() == this)
+			{
+				client.setGpuFlags(0);
+				client.setDrawCallbacks(null);
+				client.setUnlockedFps(false);
+				client.setExpandedMapLoading(0);
+			}
 
 			if (lwjglInitted)
 			{
