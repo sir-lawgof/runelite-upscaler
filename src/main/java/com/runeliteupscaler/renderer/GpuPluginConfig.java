@@ -27,7 +27,10 @@ package com.runeliteupscaler.renderer;
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
+import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
+import net.runelite.client.config.Units;
+import com.runeliteupscaler.targets.ScalePreset;
 import static com.runeliteupscaler.renderer.GpuPlugin.MAX_DISTANCE;
 import static com.runeliteupscaler.renderer.GpuPlugin.MAX_FOG_DEPTH;
 import com.runeliteupscaler.renderer.config.AntiAliasingMode;
@@ -38,6 +41,58 @@ import com.runeliteupscaler.renderer.config.UIScalingMode;
 public interface GpuPluginConfig extends Config
 {
 	String GROUP = "upscalergpu";
+
+	// ---- Upscaler settings (S1-13, partial). Not part of the upstream GPU plugin. ----
+
+	@ConfigSection(
+		name = "Upscaling",
+		description = "Render the 3D scene below native resolution and upscale it.",
+		position = 0
+	)
+	String upscalingSection = "upscaling";
+
+	@ConfigItem(
+		keyName = "renderScale",
+		name = "Render scale",
+		description = "3D scene resolution as a percentage of the 3D viewport (A-03). 100% renders at native resolution.",
+		position = 0,
+		section = upscalingSection
+	)
+	default ScalePreset renderScale()
+	{
+		return ScalePreset.NATIVE;
+	}
+
+	@Range(
+		min = ScalePreset.MIN_PERCENT,
+		max = ScalePreset.MAX_PERCENT
+	)
+	@Units(Units.PERCENT)
+	@ConfigItem(
+		keyName = "customRenderScale",
+		name = "Custom scale",
+		description = "Render scale used when Render scale is set to Custom (A-03).",
+		position = 1,
+		section = upscalingSection
+	)
+	default int customRenderScale()
+	{
+		return 75;
+	}
+
+	@ConfigItem(
+		keyName = "upscalerDebugOverlay",
+		name = "Debug overlay",
+		description = "Show backend, render resolution and display resolution (G-31).",
+		position = 2,
+		section = upscalingSection
+	)
+	default boolean upscalerDebugOverlay()
+	{
+		return false;
+	}
+
+	// ---- End of upscaler settings ----
 
 	@Range(
 		max = MAX_DISTANCE

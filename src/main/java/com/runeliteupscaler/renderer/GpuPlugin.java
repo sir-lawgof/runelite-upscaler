@@ -75,6 +75,11 @@ import net.runelite.client.plugins.PluginManager;
 import com.runeliteupscaler.renderer.config.AntiAliasingMode;
 import com.runeliteupscaler.renderer.config.UIScalingMode;
 import com.runeliteupscaler.renderer.template.Template;
+import com.runeliteupscaler.debug.RenderStats;
+import com.runeliteupscaler.debug.UpscalerDebugOverlay;
+import com.runeliteupscaler.targets.RenderSize;
+import com.runeliteupscaler.targets.RenderTargets;
+import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.rlawt.AWTContext;
@@ -162,10 +167,23 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private int vaoUiHandle;
 	private int vboUiHandle;
 
-	private int fboScene;
+	// S1-02, A-02: off-screen scene target at render resolution (replaces the canvas-sized fboScene)
+	private final RenderTargets renderTargets = new RenderTargets();
 	private boolean sceneFboValid;
-	private int rboColorBuffer;
-	private int rboDepthBuffer;
+	private int aaSamples;
+	// S1-02, S1-11: where the scene goes on the window, in device pixels (GL coords, origin bottom-left).
+	// Set together with the render targets in preSceneDrawToplevel so the two always match.
+	private int displayX, displayY, displayWidth, displayHeight;
+	// Color the scene pass cleared to. The stock plugin cleared the whole canvas-sized FBO and blitted all
+	// of it, so the window outside the 3D viewport showed this color; draw() keeps that for parity (G-30).
+	private float sceneClearR, sceneClearG, sceneClearB;
+
+	// G-31: debug overlay
+	private final RenderStats renderStats = new RenderStats();
+	private UpscalerDebugOverlay debugOverlay;
+
+	@Inject
+	private OverlayManager overlayManager;
 
 	private int textureArrayId;
 
@@ -173,8 +191,6 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 	private int lastCanvasWidth;
 	private int lastCanvasHeight;
-	private int lastStretchedCanvasWidth;
-	private int lastStretchedCanvasHeight;
 	private AntiAliasingMode lastAntiAliasingMode;
 	private int lastAnisotropicFilteringLevel = -1;
 
@@ -295,6 +311,8 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		}
 		clientUploader = new SceneUploader(renderCallbackManager);
 		mapUploader = new SceneUploader(renderCallbackManager);
+		debugOverlay = new UpscalerDebugOverlay(renderStats, config::upscalerDebugOverlay); // G-31
+		overlayManager.add(debugOverlay);
 		clientThread.invoke(() ->
 		{
 			// G-10: refuse to start if another renderer already owns DrawCallbacks (for example a
@@ -308,7 +326,6 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 			try
 			{
-				fboScene = -1;
 				lastAnisotropicFilteringLevel = -1;
 
 				AWTContext.loadNatives();
@@ -391,7 +408,6 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				client.resizeCanvas();
 
 				lastCanvasWidth = lastCanvasHeight = -1;
-				lastStretchedCanvasWidth = lastStretchedCanvasHeight = -1;
 				lastAntiAliasingMode = null;
 
 				textureArrayId = -1;
@@ -489,6 +505,12 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	@Override
 	protected void shutDown()
 	{
+		if (debugOverlay != null)
+		{
+			overlayManager.remove(debugOverlay); // G-31
+			debugOverlay = null;
+		}
+
 		clientThread.invoke(() ->
 		{
 			// G-10: only reset the client's renderer state if this plugin owns it, so a refused
@@ -515,7 +537,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				shutdownProgram();
 				shutdownVao();
 				shutdownBuffers();
-				shutdownFbo();
+				renderTargets.close(); // A-02, G-11
 			}
 
 			if (awtContext != null)
@@ -822,71 +844,6 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		interfaceTexture = -1;
 	}
 
-	private void initFbo(int width, int height, int aaSamples)
-	{
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
-
-		width = getScaledValue(transform.getScaleX(), width);
-		height = getScaledValue(transform.getScaleY(), height);
-
-		if (aaSamples > 0)
-		{
-			glEnable(GL_MULTISAMPLE);
-		}
-		else
-		{
-			glDisable(GL_MULTISAMPLE);
-		}
-
-		// Create and bind the FBO
-		fboScene = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, fboScene);
-
-		// Color render buffer
-		rboColorBuffer = glGenRenderbuffers();
-		glBindRenderbuffer(GL_RENDERBUFFER, rboColorBuffer);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_RGBA, width, height);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, rboColorBuffer);
-
-		// Depth render buffer
-		rboDepthBuffer = glGenRenderbuffers();
-		glBindRenderbuffer(GL_RENDERBUFFER, rboDepthBuffer);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, aaSamples, GL_DEPTH_COMPONENT32F, width, height);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, rboDepthBuffer);
-
-		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		if (status != GL_FRAMEBUFFER_COMPLETE)
-		{
-			throw new RuntimeException("FBO is incomplete. status: " + status);
-		}
-
-		// Reset
-		glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-		glBindRenderbuffer(GL_RENDERBUFFER, 0);
-	}
-
-	private void shutdownFbo()
-	{
-		if (fboScene != -1)
-		{
-			glDeleteFramebuffers(fboScene);
-			fboScene = -1;
-		}
-
-		if (rboColorBuffer != 0)
-		{
-			glDeleteRenderbuffers(rboColorBuffer);
-			rboColorBuffer = 0;
-		}
-
-		if (rboDepthBuffer != 0)
-		{
-			glDeleteRenderbuffers(rboDepthBuffer);
-			rboDepthBuffer = 0;
-		}
-	}
-
 	@Override
 	public void preSceneDraw(Scene scene, Projection entityProjection,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw,
@@ -956,40 +913,6 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		final int viewportHeight = client.getViewportHeight();
 		final int viewportWidth = client.getViewportWidth();
 
-		// Setup FBO and anti-aliasing
-		{
-			final AntiAliasingMode antiAliasingMode = config.antiAliasingMode();
-			final Dimension stretchedDimensions = client.getStretchedDimensions();
-
-			final int stretchedCanvasWidth = client.isStretchedEnabled() ? stretchedDimensions.width : canvasWidth;
-			final int stretchedCanvasHeight = client.isStretchedEnabled() ? stretchedDimensions.height : canvasHeight;
-
-			// Re-create fbo
-			if (lastStretchedCanvasWidth != stretchedCanvasWidth
-				|| lastStretchedCanvasHeight != stretchedCanvasHeight
-				|| lastAntiAliasingMode != antiAliasingMode)
-			{
-				shutdownFbo();
-
-				// Bind default FBO to check whether anti-aliasing is forced
-				glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
-				final int forcedAASamples = glGetInteger(GL_SAMPLES);
-				final int maxSamples = glGetInteger(GL_MAX_SAMPLES);
-				final int samples = forcedAASamples != 0 ? forcedAASamples :
-					Math.min(antiAliasingMode.getSamples(), maxSamples);
-
-				log.debug("AA samples: {}, max samples: {}, forced samples: {}", samples, maxSamples, forcedAASamples);
-
-				initFbo(stretchedCanvasWidth, stretchedCanvasHeight, samples);
-
-				lastStretchedCanvasWidth = stretchedCanvasWidth;
-				lastStretchedCanvasHeight = stretchedCanvasHeight;
-				lastAntiAliasingMode = antiAliasingMode;
-			}
-
-			glBindFramebuffer(GL_DRAW_FRAMEBUFFER, fboScene);
-		}
-
 		// Setup anisotropic filtering
 		final int anisotropicFilteringLevel = config.anisotropicFilteringLevel();
 
@@ -1025,7 +948,56 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 			renderWidthOff = (int) Math.floor(scaleFactorX * (renderWidthOff)) - padding;
 		}
 
-		glDpiAwareViewport(renderWidthOff, renderCanvasHeight - renderViewportHeight - renderHeightOff, renderViewportWidth, renderViewportHeight);
+		// S1-02, S1-11: the 3D viewport rectangle on the window, in device pixels. This is exactly the rectangle the
+		// stock plugin passed to glDpiAwareViewport; the scene is now drawn off-screen and placed here in draw().
+		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
+		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
+		displayX = getScaledValue(transform.getScaleX(), renderWidthOff);
+		displayY = getScaledValue(transform.getScaleY(), renderCanvasHeight - renderViewportHeight - renderHeightOff);
+		displayWidth = Math.max(1, getScaledValue(transform.getScaleX(), renderViewportWidth));
+		displayHeight = Math.max(1, getScaledValue(transform.getScaleY(), renderViewportHeight));
+
+		// S1-02, A-03: render resolution = display viewport size x scale
+		final int scalePercent = config.renderScale().percent(config.customRenderScale());
+		final int renderWidth = RenderSize.scale(displayWidth, scalePercent);
+		final int renderHeight = RenderSize.scale(displayHeight, scalePercent);
+
+		// Setup anti-aliasing (same sample selection as the stock plugin)
+		final AntiAliasingMode antiAliasingMode = config.antiAliasingMode();
+		if (lastAntiAliasingMode != antiAliasingMode)
+		{
+			// Bind default FBO to check whether anti-aliasing is forced
+			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+			final int forcedAASamples = glGetInteger(GL_SAMPLES);
+			final int maxSamples = glGetInteger(GL_MAX_SAMPLES);
+			aaSamples = forcedAASamples != 0 ? forcedAASamples :
+				Math.min(antiAliasingMode.getSamples(), maxSamples);
+
+			log.debug("AA samples: {}, max samples: {}, forced samples: {}", aaSamples, maxSamples, forcedAASamples);
+			lastAntiAliasingMode = antiAliasingMode;
+		}
+
+		// A-02: recreate the scene target when the render size or sample count changes (window resize, scale change)
+		if (renderTargets.ensure(renderWidth, renderHeight, aaSamples))
+		{
+			log.debug("Scene target {}x{} ({}x MSAA) for display {}x{} at {}%",
+				renderWidth, renderHeight, aaSamples, displayWidth, displayHeight, scalePercent);
+			// Reset (as the stock initFbo did): read framebuffer back to the default
+			glBindFramebuffer(GL_FRAMEBUFFER, awtContext.getFramebuffer(false));
+		}
+
+		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, renderTargets.sceneFbo());
+		glViewport(0, 0, renderWidth, renderHeight);
+
+		// G-31
+		renderStats.backend = renderWidth == displayWidth && renderHeight == displayHeight
+			? "Native (no upscale)" : "Bilinear blit";
+		renderStats.scalePercent = scalePercent;
+		renderStats.renderWidth = renderWidth;
+		renderStats.renderHeight = renderHeight;
+		renderStats.displayWidth = displayWidth;
+		renderStats.displayHeight = displayHeight;
+		renderStats.msaaSamples = aaSamples;
 
 		glUseProgram(glProgram);
 
@@ -1088,12 +1060,16 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		Model skybox = scene.getSkybox();
 		if (skybox == null)
 		{
-			glClearColor((sky >> 16 & 0xFF) / 255f, (sky >> 8 & 0xFF) / 255f, (sky & 0xFF) / 255f, 1f);
+			sceneClearR = (sky >> 16 & 0xFF) / 255f; // S1-02: remembered for draw(), see field comment
+			sceneClearG = (sky >> 8 & 0xFF) / 255f;
+			sceneClearB = (sky & 0xFF) / 255f;
+			glClearColor(sceneClearR, sceneClearG, sceneClearB, 1f);
 			glClearDepth(0d);
 			glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 			return;
 		}
 
+		sceneClearR = sceneClearG = sceneClearB = 0f; // S1-02
 		glClearColor(0f, 0f, 0f, 1f);
 		glClearDepth(0d);
 		glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
@@ -1138,20 +1114,22 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 	private void blitSceneFbo()
 	{
-		int width = lastStretchedCanvasWidth;
-		int height = lastStretchedCanvasHeight;
-
-		final GraphicsConfiguration graphicsConfiguration = clientUI.getGraphicsConfiguration();
-		final AffineTransform transform = graphicsConfiguration.getDefaultTransform();
-
-		width = getScaledValue(transform.getScaleX(), width);
-		height = getScaledValue(transform.getScaleY(), height);
+		// S1-02: place the render-resolution scene into the 3D viewport rectangle on the window.
+		final int renderWidth = renderTargets.width();
+		final int renderHeight = renderTargets.height();
+		final boolean scaled = renderWidth != displayWidth || renderHeight != displayHeight;
 
 		int defaultFbo = awtContext.getFramebuffer(false);
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, fboScene);
+		// S1-04: a multisampled framebuffer can't be blitted to a different size, so resolve at render resolution
+		// first. At native size, blit straight from the scene target (resolving in the blit) like the stock plugin.
+		int source = scaled ? renderTargets.resolvedColorFbo() : renderTargets.sceneFbo();
+		glBindFramebuffer(GL_READ_FRAMEBUFFER, source);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFbo);
-		glBlitFramebuffer(0, 0, width, height, 0, 0, width, height,
-			GL_COLOR_BUFFER_BIT, GL_NEAREST);
+		// Temporary bilinear stretch until the Upscaler interface and bilinear backend exist (A-01, S1-05).
+		// GL_NEAREST at native size keeps the result identical to the stock plugin (G-30).
+		glBlitFramebuffer(0, 0, renderWidth, renderHeight,
+			displayX, displayY, displayX + displayWidth, displayY + displayHeight,
+			GL_COLOR_BUFFER_BIT, scaled ? GL_LINEAR : GL_NEAREST);
 
 		// Reset
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, defaultFbo);
@@ -1552,12 +1530,18 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 		prepareInterfaceTexture(canvasWidth, canvasHeight);
 
-		glClearColor(0, 0, 0, 1);
-		glClear(GL_COLOR_BUFFER_BIT);
-
 		if (sceneFboValid)
 		{
+			// S1-02: the scene target now only covers the 3D viewport; fill the rest of the window with the
+			// scene's clear color, as the stock full-canvas blit did (G-30)
+			glClearColor(sceneClearR, sceneClearG, sceneClearB, 1);
+			glClear(GL_COLOR_BUFFER_BIT);
 			blitSceneFbo();
+		}
+		else
+		{
+			glClearColor(0, 0, 0, 1);
+			glClear(GL_COLOR_BUFFER_BIT);
 		}
 
 		// Texture on UI
