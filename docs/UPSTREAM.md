@@ -5,7 +5,7 @@ The renderer in this repo is forked from RuneLite's stock GPU plugin.
 | | |
 | --- | --- |
 | Upstream repo | https://github.com/runelite/runelite |
-| Release tag | `runelite-parent-1.13.6` (matches `runeLiteVersion = latest.release`, resolved 2026-11-14) |
+| Release tag | `runelite-parent-1.13.6` (`runeLiteVersion` in build.gradle is pinned to `1.13.6` to match) |
 | Commit | `d62b158e83450b0708f053c753e3508c762a0803` |
 
 ## Paths

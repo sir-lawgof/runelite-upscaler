@@ -13,7 +13,7 @@ repositories {
 	mavenCentral()
 }
 
-def runeLiteVersion = 'latest.release'
+def runeLiteVersion = '1.13.6' // G-14: pinned to the forked upstream release, see docs/UPSTREAM.md
 def pluginMainClass = 'com.runeliteupscaler.UpscalerPluginTest'
 
 dependencies {
