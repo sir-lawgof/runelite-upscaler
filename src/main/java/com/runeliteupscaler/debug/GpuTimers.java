@@ -41,6 +41,7 @@ public final class GpuTimers implements AutoCloseable
 	public enum Stage
 	{
 		SCENE("Scene"),
+		MOTION("Motion"),
 		UPSCALE("Upscale"),
 		PRESENT("Present"),
 		UI("UI");

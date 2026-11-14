@@ -78,6 +78,8 @@ import com.runeliteupscaler.renderer.template.Template;
 import com.runeliteupscaler.debug.DebugView;
 import com.runeliteupscaler.debug.DebugViews;
 import com.runeliteupscaler.debug.GlObjects;
+import com.runeliteupscaler.temporal.CameraMotionPass;
+import com.runeliteupscaler.temporal.Reprojection;
 import com.runeliteupscaler.temporal.TemporalState;
 import com.runeliteupscaler.debug.GpuTimers;
 import com.runeliteupscaler.debug.RenderStats;
@@ -206,6 +208,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	// Step 2: temporal state (S2-05, S2-12) and debug views (G-32)
 	private final TemporalState temporalState = new TemporalState();
 	private final DebugViews debugViews = new DebugViews();
+	private final CameraMotionPass cameraMotionPass = new CameraMotionPass(); // S2-06
 	/** Q-07: true when glClipControl(ZERO_TO_ONE) is active, so window depth = 100 / z_view */
 	private boolean depthZeroToOne;
 	// S1-15: GL_NVX_gpu_memory_info, read about once a second while the overlay is shown
@@ -582,6 +585,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				}
 				gpuTimers.close(); // A-06, G-11
 				debugViews.close(); // G-32, G-11
+				cameraMotionPass.close(); // S2-06, G-11
 				temporalState.reset();
 				renderTargets.close(); // A-02, G-11
 
@@ -1221,6 +1225,22 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	{
 		int defaultFbo = awtContext.getFramebuffer(false);
 
+		// S2-06: camera motion vectors from depth and this/last frame's unjittered matrices (A-05)
+		frameInputs.motion = null;
+		if (renderTargets.isTemporal() && renderTargets.motion() != null && temporalState.frameIndex() >= 0)
+		{
+			float[] currentToPrevious = Reprojection.currentToPrevious(temporalState.viewProj(), temporalState.prevViewProj());
+			if (currentToPrevious != null)
+			{
+				gpuTimers.begin(GpuTimers.Stage.MOTION); // A-06
+				if (cameraMotionPass.execute(renderTargets.depthTexture(), renderTargets.motion(), currentToPrevious, depthZeroToOne))
+				{
+					frameInputs.motion = renderTargets.motion();
+				}
+				gpuTimers.end(GpuTimers.Stage.MOTION);
+			}
+		}
+
 		// Native size: blit straight from the scene target (resolving MSAA in the blit) with GL_NEAREST,
 		// exactly like the stock plugin (G-30).
 		int source = renderTargets.sceneFbo();
@@ -1284,6 +1304,12 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 			debugViewShown = debugViews.drawDepth(renderTargets.depthTexture(),
 				displayX, displayY, displayWidth, displayHeight, depthZeroToOne,
 				getDrawDistance() * Perspective.LOCAL_TILE_SIZE);
+		}
+		else if (config.upscalerDebugView() == DebugView.MOTION && frameInputs.motion != null)
+		{
+			// G-32, S2-06: show camera motion vectors (mid-grey = still); +/-16 px = full colour
+			debugViewShown = debugViews.drawMotion(frameInputs.motion.id,
+				displayX, displayY, displayWidth, displayHeight, 16f);
 		}
 		if (!debugViewShown)
 		{

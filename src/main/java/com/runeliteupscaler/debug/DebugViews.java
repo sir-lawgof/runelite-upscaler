@@ -47,6 +47,79 @@ public final class DebugViews implements AutoCloseable
 	private int vao;
 	private boolean failed;
 
+	private int motionProgram;
+	private int uniMotionTex;
+	private int uniMotionRect;
+	private int uniMotionRange;
+	private boolean motionFailed;
+
+	/**
+	 * S2-06, G-32: draw motion vectors (mid-grey = still) into the window's current draw framebuffer.
+	 *
+	 * @param range motion in pixels that maps to full red/green
+	 * @return false if the view couldn't be drawn (show the normal image instead)
+	 */
+	public boolean drawMotion(int motionTex, int x, int y, int width, int height, float range)
+	{
+		if (motionTex == 0 || !ensureVao() || !ensureMotionProgram())
+		{
+			return false;
+		}
+
+		glDisable(GL_BLEND);
+		glDisable(GL_DEPTH_TEST);
+		glDisable(GL_CULL_FACE);
+		glViewport(x, y, width, height);
+		glUseProgram(motionProgram);
+		glUniform1i(uniMotionTex, 0);
+		glUniform4f(uniMotionRect, x, y, width, height);
+		glUniform1f(uniMotionRange, range);
+		glActiveTexture(GL_TEXTURE0);
+		glBindTexture(GL_TEXTURE_2D, motionTex);
+		glBindVertexArray(vao);
+		glDrawArrays(GL_TRIANGLES, 0, 3);
+		glBindVertexArray(0);
+		glBindTexture(GL_TEXTURE_2D, 0);
+		glUseProgram(0);
+		return true;
+	}
+
+	private boolean ensureMotionProgram()
+	{
+		if (motionProgram != 0)
+		{
+			return true;
+		}
+		if (motionFailed)
+		{
+			return false;
+		}
+		try
+		{
+			motionProgram = GlProgram.compile(template, "fullscreen_vert.glsl", "motion_view_frag.glsl");
+		}
+		catch (RuntimeException ex)
+		{
+			motionFailed = true;
+			log.warn("Motion debug view unavailable: {}", ex.getMessage());
+			return false;
+		}
+		uniMotionTex = glGetUniformLocation(motionProgram, "motionTex");
+		uniMotionRect = glGetUniformLocation(motionProgram, "rect");
+		uniMotionRange = glGetUniformLocation(motionProgram, "range");
+		return true;
+	}
+
+	private boolean ensureVao()
+	{
+		if (vao == 0)
+		{
+			vao = glGenVertexArrays();
+			GlObjects.created(GlObjects.Type.VERTEX_ARRAY, 1);
+		}
+		return true;
+	}
+
 	/**
 	 * S2-02, G-32: draw the depth texture as greyscale into the window's current draw framebuffer.
 	 *
@@ -103,9 +176,7 @@ public final class DebugViews implements AutoCloseable
 		uniRect = glGetUniformLocation(depthProgram, "rect");
 		uniZeroToOne = glGetUniformLocation(depthProgram, "zeroToOne");
 		uniMaxZ = glGetUniformLocation(depthProgram, "maxZ");
-		vao = glGenVertexArrays();
-		GlObjects.created(GlObjects.Type.VERTEX_ARRAY, 1);
-		return true;
+		return ensureVao();
 	}
 
 	/** A-07, G-11 */
@@ -118,6 +189,12 @@ public final class DebugViews implements AutoCloseable
 			GlObjects.deleted(GlObjects.Type.PROGRAM, 1);
 			depthProgram = 0;
 		}
+		if (motionProgram != 0)
+		{
+			glDeleteProgram(motionProgram);
+			GlObjects.deleted(GlObjects.Type.PROGRAM, 1);
+			motionProgram = 0;
+		}
 		if (vao != 0)
 		{
 			glDeleteVertexArrays(vao);
@@ -125,5 +202,6 @@ public final class DebugViews implements AutoCloseable
 			vao = 0;
 		}
 		failed = false;
+		motionFailed = false;
 	}
 }

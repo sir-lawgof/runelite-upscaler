@@ -56,6 +56,8 @@ public final class RenderTargets implements AutoCloseable
 	/** S2-02: when temporal inputs are on, depth is a sampleable 32-bit float texture instead of a renderbuffer. */
 	private int sceneDepthTex;
 	private boolean temporal;
+	/** S2-06: render-res camera motion vectors (RG16F, pixels, current to previous); null unless temporal. */
+	private Texture motion;
 
 	/** Render-res single-sample scene color; null unless {@link #needsResolve()}. */
 	private Texture color;
@@ -144,6 +146,10 @@ public final class RenderTargets implements AutoCloseable
 		{
 			color = Texture.create("color", renderWidth, renderHeight, format);
 		}
+		if (temporal)
+		{
+			motion = Texture.create("motion", renderWidth, renderHeight, TargetFormat.RG16F);
+		}
 		if (isScaled())
 		{
 			output = Texture.create("output", displayWidth, displayHeight, format);
@@ -182,6 +188,12 @@ public final class RenderTargets implements AutoCloseable
 	public boolean isTemporal()
 	{
 		return temporal;
+	}
+
+	/** S2-06: camera motion vectors at render resolution; null unless temporal. */
+	public Texture motion()
+	{
+		return motion;
 	}
 
 	/**
@@ -245,6 +257,11 @@ public final class RenderTargets implements AutoCloseable
 		{
 			output.delete();
 			output = null;
+		}
+		if (motion != null)
+		{
+			motion.delete();
+			motion = null;
 		}
 
 		if (sceneFbo != 0)

@@ -31,7 +31,8 @@ package com.runeliteupscaler.debug;
 public enum DebugView
 {
 	OFF("Off"),
-	DEPTH("Depth");
+	DEPTH("Depth"),
+	MOTION("Motion");
 
 	private final String label;
 

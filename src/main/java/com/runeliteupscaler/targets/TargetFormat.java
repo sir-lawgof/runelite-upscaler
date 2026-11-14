@@ -34,7 +34,9 @@ public enum TargetFormat
 {
 	/** Scene renderbuffer keeps the stock GPU plugin's GL_RGBA for parity (G-30); textures are GL_RGBA8. */
 	RGBA8("RGBA8", GL_RGBA, GL_RGBA8),
-	RGBA16F("RGBA16F", GL_RGBA16F, GL_RGBA16F);
+	RGBA16F("RGBA16F", GL_RGBA16F, GL_RGBA16F),
+	/** S2-06: two-channel half float, for motion vectors (textures only) */
+	RG16F("RG16F", GL_RG16F, GL_RG16F);
 
 	private final String label;
 	/** internal format of the (multisampled) scene color renderbuffer */
@@ -52,7 +54,7 @@ public enum TargetFormat
 	/** Pixel type to pass to glTexImage2D when allocating storage with no data. */
 	public int allocationType()
 	{
-		return this == RGBA16F ? GL_HALF_FLOAT : GL_UNSIGNED_BYTE;
+		return this == RGBA8 ? GL_UNSIGNED_BYTE : GL_HALF_FLOAT;
 	}
 
 	@Override

@@ -57,6 +57,16 @@ public interface Upscaler extends AutoCloseable
 	/** Texture LOD bias for the scene pass. */
 	float mipBias(Size render, Size display);
 
+	/**
+	 * S2-07: scale (and sign) this backend applies to {@link FrameInputs#motion}, which is always in pixels,
+	 * current to previous, GL y-up (S2-06). A temporal backend passes this to its SDK's motion vector scale
+	 * instead of the pass hard-coding one convention. VERIFY each SDK's expected convention when adding it.
+	 */
+	default Vec2 motionVectorScale()
+	{
+		return new Vec2(1f, 1f);
+	}
+
 	/** A-07, G-11: free every GL or native resource this backend owns. */
 	@Override
 	void close();
