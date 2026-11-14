@@ -90,7 +90,6 @@ public final class VulkanDevice implements AutoCloseable
 	private VkDevice device;
 	private VkQueue queue;
 	private int queueFamily;
-	private boolean loaderCreated;
 	private final AtomicInteger validationMessages = new AtomicInteger();
 
 	public String deviceName = "";
@@ -141,8 +140,7 @@ public final class VulkanDevice implements AutoCloseable
 			return "no GL device UUID to match (S2-20)";
 		}
 
-		VK.create(); // loads the system Vulkan loader (vulkan-1.dll / libvulkan.so.1)
-		loaderCreated = true;
+		ensureLoader();
 
 		try (MemoryStack stack = MemoryStack.stackPush())
 		{
@@ -306,6 +304,24 @@ public final class VulkanDevice implements AutoCloseable
 		return null;
 	}
 
+	/**
+	 * Load the system Vulkan loader (vulkan-1.dll / libvulkan.so.1) if it isn't loaded yet. LWJGL's VK class
+	 * loads it by itself the first time the class is used (unless Configuration.VULKAN_EXPLICIT_INIT is set),
+	 * so calling VK.create() unconditionally throws "Vulkan has already been created" (8.4). The loader stays
+	 * loaded for the life of the process; only Vulkan objects are created and destroyed per device.
+	 */
+	private static void ensureLoader()
+	{
+		try
+		{
+			VK.getFunctionProvider();
+		}
+		catch (RuntimeException notLoaded)
+		{
+			VK.create();
+		}
+	}
+
 	private static boolean hasInstanceLayer(MemoryStack stack, String name)
 	{
 		IntBuffer n = stack.mallocInt(1);
@@ -357,7 +373,7 @@ public final class VulkanDevice implements AutoCloseable
 		return validationMessages.get();
 	}
 
-	/** S2-26, A-07, G-11: destroy the device, messenger and instance; unload the loader. Safe to call twice. */
+	/** S2-26, A-07, G-11: destroy the device, messenger and instance (the loader stays loaded). Safe to call twice. */
 	@Override
 	public void close()
 	{
@@ -382,11 +398,6 @@ public final class VulkanDevice implements AutoCloseable
 		{
 			callback.free();
 			callback = null;
-		}
-		if (loaderCreated)
-		{
-			VK.destroy();
-			loaderCreated = false;
 		}
 	}
 }
