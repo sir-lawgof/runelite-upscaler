@@ -1,11 +1,11 @@
-package com.example;
+package com.runeliteupscaler;
 
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 
-@ConfigGroup("example")
-public interface ExampleConfig extends Config
+@ConfigGroup("upscalergpu")
+public interface UpscalerConfig extends Config
 {
 	@ConfigItem(
 		keyName = "greeting",
