@@ -122,6 +122,19 @@ public interface GpuPluginConfig extends Config
 		return false;
 	}
 
+	@ConfigItem(
+		keyName = "highPrecisionTargets",
+		name = "High-precision targets",
+		description = "Development option (S1-03): use RGBA16F render targets instead of RGBA8. Needed later for "
+			+ "temporal upscaling; should look the same as off.",
+		position = 5,
+		section = upscalingSection
+	)
+	default boolean highPrecisionTargets()
+	{
+		return false;
+	}
+
 	// ---- End of upscaler settings ----
 
 	@Range(

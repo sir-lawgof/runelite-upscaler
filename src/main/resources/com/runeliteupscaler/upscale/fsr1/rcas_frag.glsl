@@ -16,8 +16,9 @@ uniform sampler2D inputTex;
 uniform uvec4 con;
 
 #define FSR_RCAS_F 1
-// Clamp so the 3x3 neighborhood never reads outside the image (no edge artifacts, T-02)
-AF4 FsrRcasLoadF(ASU2 p) { return texelFetch(inputTex, clamp(p, ivec2(0), textureSize(inputTex, 0) - 1), 0); }
+// Clamp the coordinate so the 3x3 neighborhood never reads outside the image (no edge artifacts, T-02).
+// S1-03: clamp the value to [0,1] too; negative input makes RCAS output NaN (AMD guide p.13). No-op for RGBA8.
+AF4 FsrRcasLoadF(ASU2 p) { return clamp(texelFetch(inputTex, clamp(p, ivec2(0), textureSize(inputTex, 0) - 1), 0), 0.0, 1.0); }
 void FsrRcasInputF(inout AF1 r, inout AF1 g, inout AF1 b) {}
 
 #include "fsr1/ffx_fsr1.h"

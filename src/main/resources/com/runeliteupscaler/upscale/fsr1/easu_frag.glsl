@@ -20,9 +20,11 @@ uniform uvec4 con2;
 uniform uvec4 con3;
 
 #define FSR_EASU_F 1
-AF4 FsrEasuRF(AF2 p) { return textureGather(inputTex, p, 0); }
-AF4 FsrEasuGF(AF2 p) { return textureGather(inputTex, p, 1); }
-AF4 FsrEasuBF(AF2 p) { return textureGather(inputTex, p, 2); }
+// S1-03: FSR 1 needs input normalized to [0,1]. RGBA8 targets already are; RGBA16F targets don't clamp
+// fragment output, so clamp here (no-op for RGBA8).
+AF4 FsrEasuRF(AF2 p) { return clamp(textureGather(inputTex, p, 0), 0.0, 1.0); }
+AF4 FsrEasuGF(AF2 p) { return clamp(textureGather(inputTex, p, 1), 0.0, 1.0); }
+AF4 FsrEasuBF(AF2 p) { return clamp(textureGather(inputTex, p, 2), 0.0, 1.0); }
 
 #include "fsr1/ffx_fsr1.h"
 

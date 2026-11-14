@@ -80,6 +80,7 @@ import com.runeliteupscaler.debug.UpscalerDebugOverlay;
 import com.runeliteupscaler.targets.RenderSize;
 import com.runeliteupscaler.targets.RenderTargets;
 import com.runeliteupscaler.targets.Size;
+import com.runeliteupscaler.targets.TargetFormat;
 import com.runeliteupscaler.targets.Texture;
 import com.runeliteupscaler.upscale.BilinearUpscaler;
 import com.runeliteupscaler.upscale.Fsr1Upscaler;
@@ -1016,7 +1017,9 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		}
 
 		// A-02: recreate the scene target when the render size or sample count changes (window resize, scale change)
-		if (renderTargets.ensure(renderWidth, renderHeight, displayWidth, displayHeight, aaSamples))
+		// S1-03: target color format, switched live by the development flag
+		final TargetFormat targetFormat = config.highPrecisionTargets() ? TargetFormat.RGBA16F : TargetFormat.RGBA8;
+		if (renderTargets.ensure(renderWidth, renderHeight, displayWidth, displayHeight, aaSamples, targetFormat))
 		{
 			log.debug("Scene target {}x{} ({}x MSAA) for display {}x{} at {}%",
 				renderWidth, renderHeight, aaSamples, displayWidth, displayHeight, scalePercent);
@@ -1044,6 +1047,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		renderStats.displayWidth = displayWidth;
 		renderStats.displayHeight = displayHeight;
 		renderStats.msaaSamples = aaSamples;
+		renderStats.targetFormat = targetFormat.toString();
 
 		glUseProgram(glProgram);
 
@@ -1169,7 +1173,12 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		int sourceHeight = renderTargets.renderHeight();
 		int filter = GL_NEAREST;
 
-		if (renderTargets.isScaled())
+		if (!renderTargets.isScaled() && renderTargets.needsResolve())
+		{
+			// S1-03: multisampled RGBA16F at native size; resolve first, then copy float to the 8-bit window
+			source = renderTargets.resolveColor().fbo;
+		}
+		else if (renderTargets.isScaled())
 		{
 			// Stage 2, upscale pass (A-01, S1-05). S1-04: the color input is resolved to single-sample at
 			// render resolution first, since a multisampled framebuffer can't be blitted to a different size.

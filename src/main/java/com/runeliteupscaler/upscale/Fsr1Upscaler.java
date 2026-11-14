@@ -110,27 +110,8 @@ public final class Fsr1Upscaler implements Upscaler
 	@Override
 	public void resize(Size render, Size display)
 	{
+		// The intermediate is (re)created in evaluate() to match the output's size and format (S1-03)
 		deleteIntermediate();
-
-		int tex = glGenTextures();
-		glBindTexture(GL_TEXTURE_2D, tex);
-		glTexImage2D(GL_TEXTURE_2D, 0, GL_RGBA8, display.width, display.height, 0, GL_RGBA, GL_UNSIGNED_BYTE, 0);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
-		glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
-		glBindTexture(GL_TEXTURE_2D, 0);
-
-		int fbo = glGenFramebuffers();
-		glBindFramebuffer(GL_FRAMEBUFFER, fbo);
-		glFramebufferTexture2D(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_TEXTURE_2D, tex, 0);
-		int status = glCheckFramebufferStatus(GL_FRAMEBUFFER);
-		intermediate = new Texture(tex, fbo, display.width, display.height);
-		if (status != GL_FRAMEBUFFER_COMPLETE)
-		{
-			throw new IllegalStateException("FSR 1 intermediate FBO incomplete: " + status);
-		}
-
 		easuCon = Fsr1Constants.easu(render.width, render.height, display.width, display.height);
 	}
 
@@ -143,10 +124,15 @@ public final class Fsr1Upscaler implements Upscaler
 	@Override
 	public void evaluate(FrameInputs in, Texture out)
 	{
-		if (intermediate == null || intermediate.width != out.width || intermediate.height != out.height
-			|| easuCon == null)
+		if (easuCon == null)
 		{
 			resize(in.color.size(), out.size());
+		}
+		if (intermediate == null || intermediate.width != out.width || intermediate.height != out.height
+			|| intermediate.format != out.format)
+		{
+			deleteIntermediate();
+			intermediate = Texture.create("FSR 1 intermediate", out.width, out.height, out.format);
 		}
 
 		final int sharpnessPercent = Math.round(in.sharpness * 100f);
@@ -233,8 +219,7 @@ public final class Fsr1Upscaler implements Upscaler
 	{
 		if (intermediate != null)
 		{
-			glDeleteFramebuffers(intermediate.fbo);
-			glDeleteTextures(intermediate.id);
+			intermediate.delete();
 			intermediate = null;
 		}
 	}

@@ -39,4 +39,6 @@ public final class RenderStats
 	public int displayWidth;
 	public int displayHeight;
 	public int msaaSamples;
+	/** S1-03 */
+	public String targetFormat = "-";
 }

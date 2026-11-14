@@ -63,6 +63,7 @@ public class UpscalerDebugOverlay extends OverlayPanel
 		line("Render", stats.renderWidth + " x " + stats.renderHeight);
 		line("Display", stats.displayWidth + " x " + stats.displayHeight);
 		line("MSAA", stats.msaaSamples > 0 ? stats.msaaSamples + "x" : "off");
+		line("Targets", stats.targetFormat);
 		if (!stats.fallbackReason.isEmpty())
 		{
 			line("Fallback", stats.fallbackReason);
