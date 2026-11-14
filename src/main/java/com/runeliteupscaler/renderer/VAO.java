@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package net.runelite.client.plugins.gpu;
+package com.runeliteupscaler.renderer;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -30,9 +30,9 @@ import java.util.List;
 import lombok.extern.slf4j.Slf4j;
 import net.runelite.api.Renderable;
 import net.runelite.api.Scene;
-import static net.runelite.client.plugins.gpu.GpuPlugin.uniBase;
-import static net.runelite.client.plugins.gpu.GpuPlugin.uniEntityProj;
-import static net.runelite.client.plugins.gpu.GpuPlugin.uniEntityTint;
+import static com.runeliteupscaler.renderer.GpuPlugin.uniBase;
+import static com.runeliteupscaler.renderer.GpuPlugin.uniEntityProj;
+import static com.runeliteupscaler.renderer.GpuPlugin.uniEntityTint;
 import static org.lwjgl.opengl.GL33C.*;
 
 class VAO

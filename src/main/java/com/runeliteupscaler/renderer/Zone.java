@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package net.runelite.client.plugins.gpu;
+package com.runeliteupscaler.renderer;
 
 import java.nio.IntBuffer;
 import java.util.ArrayDeque;
@@ -39,9 +39,9 @@ import net.runelite.api.Model;
 import net.runelite.api.Perspective;
 import net.runelite.api.Scene;
 import net.runelite.api.WorldView;
-import static net.runelite.client.plugins.gpu.ModelUploader.MAX_DIAMETER;
-import static net.runelite.client.plugins.gpu.ModelUploader.MAX_VERTEX_COUNT;
-import static net.runelite.client.plugins.gpu.GpuPlugin.uniBase;
+import static com.runeliteupscaler.renderer.ModelUploader.MAX_DIAMETER;
+import static com.runeliteupscaler.renderer.ModelUploader.MAX_VERTEX_COUNT;
+import static com.runeliteupscaler.renderer.GpuPlugin.uniBase;
 import org.lwjgl.BufferUtils;
 import static org.lwjgl.opengl.GL33C.*;
 

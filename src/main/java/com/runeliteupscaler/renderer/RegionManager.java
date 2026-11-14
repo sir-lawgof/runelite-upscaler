@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package net.runelite.client.plugins.gpu;
+package com.runeliteupscaler.renderer;
 
 import java.io.IOException;
 import javax.inject.Inject;
@@ -30,7 +30,7 @@ import javax.inject.Singleton;
 import net.runelite.api.Constants;
 import net.runelite.api.Scene;
 import net.runelite.api.Tile;
-import net.runelite.client.plugins.gpu.regions.Regions;
+import com.runeliteupscaler.renderer.regions.Regions;
 
 @Singleton
 class RegionManager

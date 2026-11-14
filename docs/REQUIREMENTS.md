@@ -414,7 +414,9 @@ Record VERIFY results here: date, requirement ID, what the source or SDK actuall
 
 | Date | Req ID | Finding | Source |
 | --- | --- | --- | --- |
-|  |  |  |  |
+| 2026-11-14 | S1-01 | Stock GPU plugin from RuneLite 1.13.6 (`d62b158e`) compiles as an external plugin after only the package rename `net.runelite.client.plugins.gpu` → `com.runeliteupscaler.renderer`. No package-private or otherwise unreachable client APIs were needed. Shaders and `regions/regions.txt` load relative to the class, so the resource move needed no code change. | `src/main/java/com/runeliteupscaler/renderer/**`; `renderer/template/Template.java`, `renderer/RegionManager.java` |
+| 2026-11-14 | S1-01, G-10 | `PluginManager` stores a plugin's enabled state under `runelite.<configName or class simple name>` (lowercase). The fork keeps the class name `GpuPlugin`, so without a change it would share the `gpuplugin` key with the stock GPU plugin and turn on/off with it. Fixed by `configName = "UpscalerGpuPlugin"` in `@PluginDescriptor`; display name changed to "Upscaler GPU". | upstream `runelite-client/.../plugins/PluginManager.java:511-516`; `renderer/GpuPlugin.java` |
+| 2026-11-14 | S1-01 | The fork's config group was `"gpu"`, the same as the stock plugin, so the two would read and write the same settings and both react to each other's changes (`GpuPlugin.onConfigChanged`). Changed `GpuPluginConfig.GROUP` to `"upscalergpu"`. Settings start from defaults rather than copying the user's stock GPU settings. | `renderer/GpuPluginConfig.java` |
 
 ### 8.5 Results log
 

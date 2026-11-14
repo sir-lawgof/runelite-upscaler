@@ -22,22 +22,22 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package net.runelite.client.plugins.gpu;
+package com.runeliteupscaler.renderer;
 
 import net.runelite.client.config.Config;
 import net.runelite.client.config.ConfigGroup;
 import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.Range;
-import static net.runelite.client.plugins.gpu.GpuPlugin.MAX_DISTANCE;
-import static net.runelite.client.plugins.gpu.GpuPlugin.MAX_FOG_DEPTH;
-import net.runelite.client.plugins.gpu.config.AntiAliasingMode;
-import net.runelite.client.plugins.gpu.config.ColorBlindMode;
-import net.runelite.client.plugins.gpu.config.UIScalingMode;
+import static com.runeliteupscaler.renderer.GpuPlugin.MAX_DISTANCE;
+import static com.runeliteupscaler.renderer.GpuPlugin.MAX_FOG_DEPTH;
+import com.runeliteupscaler.renderer.config.AntiAliasingMode;
+import com.runeliteupscaler.renderer.config.ColorBlindMode;
+import com.runeliteupscaler.renderer.config.UIScalingMode;
 
 @ConfigGroup(GpuPluginConfig.GROUP)
 public interface GpuPluginConfig extends Config
 {
-	String GROUP = "gpu";
+	String GROUP = "upscalergpu";
 
 	@Range(
 		max = MAX_DISTANCE

@@ -22,7 +22,7 @@
  * (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
  * SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
-package net.runelite.client.plugins.gpu;
+package com.runeliteupscaler.renderer;
 
 import com.google.common.base.Stopwatch;
 import com.google.common.primitives.Ints;
@@ -71,9 +71,9 @@ import net.runelite.client.plugins.Plugin;
 import net.runelite.client.plugins.PluginDescriptor;
 import net.runelite.client.plugins.PluginInstantiationException;
 import net.runelite.client.plugins.PluginManager;
-import net.runelite.client.plugins.gpu.config.AntiAliasingMode;
-import net.runelite.client.plugins.gpu.config.UIScalingMode;
-import net.runelite.client.plugins.gpu.template.Template;
+import com.runeliteupscaler.renderer.config.AntiAliasingMode;
+import com.runeliteupscaler.renderer.config.UIScalingMode;
+import com.runeliteupscaler.renderer.template.Template;
 import net.runelite.client.ui.ClientUI;
 import net.runelite.client.ui.DrawManager;
 import net.runelite.rlawt.AWTContext;
@@ -91,7 +91,8 @@ import org.lwjgl.system.Callback;
 import org.lwjgl.system.Configuration;
 
 @PluginDescriptor(
-	name = "GPU",
+	name = "Upscaler GPU",
+	configName = "UpscalerGpuPlugin",
 	description = "Offloads rendering to GPU",
 	tags = {"fog", "draw distance"},
 	loadInSafeMode = false
