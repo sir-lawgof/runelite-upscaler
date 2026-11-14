@@ -32,6 +32,7 @@ import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import lombok.extern.slf4j.Slf4j;
 import org.lwjgl.PointerBuffer;
+import org.lwjgl.system.Configuration;
 import org.lwjgl.system.MemoryStack;
 import org.lwjgl.vulkan.KHRExternalMemoryFd;
 import org.lwjgl.vulkan.KHRExternalMemoryWin32;
@@ -108,6 +109,47 @@ public final class VulkanDevice implements AutoCloseable
 	 * @param wantValidation  enable VK_LAYER_KHRONOS_validation if it is installed (G-06)
 	 */
 	public static Result create(String glDeviceUuidHex, InteropSupport.Platform platform, boolean wantValidation)
+	{
+		// LWJGL's VkInstance constructor lists every device extension of every GPU on the calling thread's
+		// MemoryStack (64 KB by default); a few hundred extensions x 260 bytes overflows it (8.4). Run creation on
+		// a short-lived thread whose stack is created bigger. The handles work from any thread afterwards.
+		final Result[] out = new Result[1];
+		Thread thread = new Thread(() ->
+		{
+			Integer previous = Configuration.STACK_SIZE.get(64);
+			Configuration.STACK_SIZE.set(Math.max(previous, INIT_STACK_KB));
+			try
+			{
+				MemoryStack.stackGet(); // this thread's stack is created now, with the bigger size
+			}
+			finally
+			{
+				Configuration.STACK_SIZE.set(previous);
+			}
+			out[0] = createOnThisThread(glDeviceUuidHex, platform, wantValidation);
+		}, "upscaler-vulkan-init");
+		thread.setDaemon(true);
+		thread.start();
+		try
+		{
+			thread.join(INIT_TIMEOUT_MS);
+		}
+		catch (InterruptedException ex)
+		{
+			Thread.currentThread().interrupt();
+		}
+		if (out[0] == null)
+		{
+			return new Result(null, "Vulkan device creation timed out");
+		}
+		return out[0];
+	}
+
+	/** KB of LWJGL MemoryStack for the creation thread */
+	private static final int INIT_STACK_KB = 1024;
+	private static final long INIT_TIMEOUT_MS = 15_000;
+
+	private static Result createOnThisThread(String glDeviceUuidHex, InteropSupport.Platform platform, boolean wantValidation)
 	{
 		VulkanDevice vd = new VulkanDevice();
 		try
