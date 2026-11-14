@@ -43,6 +43,7 @@ public final class GpuTimers implements AutoCloseable
 		SCENE("Scene"),
 		MOTION("Motion"),
 		UPSCALE("Upscale"),
+		BRIDGE("Bridge"),
 		PRESENT("Present"),
 		UI("UI");
 

@@ -77,6 +77,7 @@ public class UpscalerDebugOverlay extends OverlayPanel
 		line("Mip bias", String.format("%.2f", stats.mipBias)); // S2-09
 		line("VK interop", stats.interop); // S2-21
 		line("VK device", stats.vulkan); // S2-20
+		line("VK bridge", stats.bridge); // S2-22 to S2-25
 		line("Targets", stats.targetFormat);
 		// S1-15: leak checks. GL objects held by this plugin's code; GPU memory for the whole device.
 		line("GL objects", GlObjects.total() + " (" + GlObjects.breakdown() + ")");

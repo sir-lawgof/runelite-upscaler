@@ -39,7 +39,9 @@ public final class GlObjects
 		RENDERBUFFER("rb"),
 		PROGRAM("prog"),
 		VERTEX_ARRAY("vao"),
-		QUERY("query");
+		QUERY("query"),
+		MEMORY_OBJECT("mem"),
+		SEMAPHORE("sem");
 
 		final String label;
 

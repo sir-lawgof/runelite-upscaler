@@ -99,6 +99,7 @@ import com.runeliteupscaler.upscale.GpuCaps;
 import com.runeliteupscaler.upscale.Upscaler;
 import com.runeliteupscaler.upscale.UpscalerChain;
 import com.runeliteupscaler.upscale.Vec2;
+import com.runeliteupscaler.vkbridge.BridgeRoundTrip;
 import com.runeliteupscaler.vkbridge.InteropSupport;
 import com.runeliteupscaler.vkbridge.VulkanDevice;
 import java.util.List;
@@ -218,6 +219,8 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private InteropSupport interop; // S2-20, S2-21
 	private VulkanDevice vulkanDevice; // S2-20, S2-21, S2-26: Vulkan side of the bridge (test setting for now)
 	private boolean vulkanFailed;
+	private BridgeRoundTrip roundTrip; // S2-22 to S2-25 (test)
+	private boolean roundTripFailed;
 	private int lastTargetDisplayWidth, lastTargetDisplayHeight;
 	// S2-09: last LOD bias set on the texture array (reapplied if the array is recreated)
 	private float lastMipBias;
@@ -673,6 +676,10 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					}
 				});
 			}
+			else if (configChanged.getKey().equals("bridgeRoundTrip"))
+			{
+				roundTripFailed = false; // a toggle retries after a failure
+			}
 			else if (configChanged.getKey().equals("vulkanBridgeTest"))
 			{
 				clientThread.invokeLater(() ->
@@ -680,6 +687,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					if (lwjglInitted && interop != null)
 					{
 						vulkanFailed = false; // a toggle retries after a failure
+						roundTripFailed = false;
 						applyVulkanBridge();
 					}
 				});
@@ -1392,6 +1400,41 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 			}
 		}
 
+		// S2-22 to S2-25 (test): send the finished frame through Vulkan and present Vulkan's copy
+		if (config.bridgeRoundTrip() && vulkanDevice != null && !roundTripFailed)
+		{
+			try
+			{
+				if (roundTrip == null)
+				{
+					roundTrip = new BridgeRoundTrip(vulkanDevice);
+				}
+				roundTrip.ensure(displayWidth, displayHeight);
+				gpuTimers.begin(GpuTimers.Stage.BRIDGE); // A-06: includes the GPU-side wait for Vulkan's work
+				roundTrip.run(source, sourceWidth, sourceHeight, filter);
+				gpuTimers.end(GpuTimers.Stage.BRIDGE);
+				source = roundTrip.outputFbo();
+				sourceWidth = roundTrip.width();
+				sourceHeight = roundTrip.height();
+				filter = GL_NEAREST;
+				renderStats.bridge = "round trip " + roundTrip.width() + "x" + roundTrip.height()
+					+ ", " + roundTrip.frames() + " frames";
+			}
+			catch (RuntimeException ex)
+			{
+				// G-13: never break the image; drop the round trip and say why
+				log.warn("Bridge round trip failed, turning it off", ex);
+				roundTripFailed = true;
+				closeRoundTrip();
+				renderStats.bridge = "failed: " + ex.getMessage();
+			}
+		}
+		else if (roundTrip != null && !config.bridgeRoundTrip())
+		{
+			closeRoundTrip();
+			renderStats.bridge = "off";
+		}
+
 		// Stage 5, present: into the 3D viewport rectangle on the window (S1-02, S1-11)
 		gpuTimers.begin(GpuTimers.Stage.PRESENT); // A-06
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFbo);
@@ -1471,8 +1514,21 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	}
 
 	/** S2-26: destroy the Vulkan device; validation reports leaked objects here. */
+	/** S2-26: free the shared images, semaphores and command pool (before the Vulkan device goes). */
+	private void closeRoundTrip()
+	{
+		if (roundTrip != null)
+		{
+			long frames = roundTrip.frames();
+			roundTrip.close();
+			roundTrip = null;
+			log.info("Bridge round trip closed after {} frames", frames);
+		}
+	}
+
 	private void closeVulkanBridge()
 	{
+		closeRoundTrip();
 		if (vulkanDevice != null)
 		{
 			int messages = vulkanDevice.validationMessages();

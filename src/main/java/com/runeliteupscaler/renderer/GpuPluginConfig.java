@@ -190,6 +190,19 @@ public interface GpuPluginConfig extends Config
 		return false;
 	}
 
+	@ConfigItem(
+		keyName = "bridgeRoundTrip",
+		name = "Bridge round trip (test)",
+		description = "Development option (S2-22 to S2-25): send every frame through Vulkan before it is shown "
+			+ "(shared images and semaphores). The game should look unchanged. Needs Vulkan bridge (test).",
+		position = 10,
+		section = upscalingSection
+	)
+	default boolean bridgeRoundTrip()
+	{
+		return false;
+	}
+
 	// ---- End of upscaler settings ----
 
 	@Range(
