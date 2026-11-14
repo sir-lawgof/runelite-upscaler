@@ -75,6 +75,7 @@ import net.runelite.client.plugins.PluginManager;
 import com.runeliteupscaler.renderer.config.AntiAliasingMode;
 import com.runeliteupscaler.renderer.config.UIScalingMode;
 import com.runeliteupscaler.renderer.template.Template;
+import com.runeliteupscaler.debug.GpuTimers;
 import com.runeliteupscaler.debug.RenderStats;
 import com.runeliteupscaler.debug.UpscalerDebugOverlay;
 import com.runeliteupscaler.targets.RenderSize;
@@ -196,6 +197,8 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 	// G-31: debug overlay
 	private final RenderStats renderStats = new RenderStats();
+	// A-06: GPU time per stage; makes no GL calls unless the debug overlay is on
+	private final GpuTimers gpuTimers = new GpuTimers(renderStats);
 	private UpscalerDebugOverlay debugOverlay;
 
 	@Inject
@@ -563,6 +566,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					upscalerChain.close(); // A-07, G-11
 					upscalerChain = null;
 				}
+				gpuTimers.close(); // A-06, G-11
 				renderTargets.close(); // A-02, G-11
 			}
 
@@ -923,6 +927,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private void preSceneDrawToplevel(Scene scene,
 		float cameraX, float cameraY, float cameraZ, float cameraPitch, float cameraYaw)
 	{
+		gpuTimers.begin(GpuTimers.Stage.SCENE); // A-06: stage 1, scene pass
 		scene.setDrawDistance(getDrawDistance());
 
 		// UBO
@@ -1154,6 +1159,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 	private void postDrawToplevel()
 	{
+		gpuTimers.end(GpuTimers.Stage.SCENE); // A-06
 		glDisable(GL_BLEND);
 		glDisable(GL_CULL_FACE);
 		glDisable(GL_DEPTH_TEST);
@@ -1182,6 +1188,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		{
 			// Stage 2, upscale pass (A-01, S1-05). S1-04: the color input is resolved to single-sample at
 			// render resolution first, since a multisampled framebuffer can't be blitted to a different size.
+			gpuTimers.begin(GpuTimers.Stage.UPSCALE); // A-06, G-31: includes the MSAA resolve
 			frameInputs.color = renderTargets.resolveColor();
 			frameInputs.sharpness = config.upscalerSharpness() / 100f; // S1-08, G-33: read live each frame
 			Texture out = renderTargets.output();
@@ -1202,6 +1209,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					selectUpscaler();
 				}
 			}
+			gpuTimers.end(GpuTimers.Stage.UPSCALE);
 
 			if (upscaled)
 			{
@@ -1218,11 +1226,13 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		}
 
 		// Stage 5, present: into the 3D viewport rectangle on the window (S1-02, S1-11)
+		gpuTimers.begin(GpuTimers.Stage.PRESENT); // A-06
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, source);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFbo);
 		glBlitFramebuffer(0, 0, sourceWidth, sourceHeight,
 			displayX, displayY, displayX + displayWidth, displayY + displayHeight,
 			GL_COLOR_BUFFER_BIT, filter);
+		gpuTimers.end(GpuTimers.Stage.PRESENT);
 
 		// Reset
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, defaultFbo);
@@ -1663,7 +1673,11 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		}
 
 		// Texture on UI
+		gpuTimers.begin(GpuTimers.Stage.UI); // A-06: stage 4, UI composite
 		drawUi(overlayColor, canvasHeight, canvasWidth);
+		gpuTimers.end(GpuTimers.Stage.UI);
+		gpuTimers.endFrame();
+		gpuTimers.setEnabled(config.upscalerDebugOverlay()); // G-31: only time while the overlay is shown
 
 		try
 		{

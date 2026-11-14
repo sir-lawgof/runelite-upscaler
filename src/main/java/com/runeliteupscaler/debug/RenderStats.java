@@ -41,4 +41,6 @@ public final class RenderStats
 	public int msaaSamples;
 	/** S1-03 */
 	public String targetFormat = "-";
+	/** A-06: smoothed GPU ms per {@link GpuTimers.Stage}, -1 = no result yet; null when timing is off */
+	public double[] gpuMs;
 }

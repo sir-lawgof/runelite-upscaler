@@ -33,8 +33,8 @@ import net.runelite.client.ui.overlay.components.LineComponent;
 import net.runelite.client.ui.overlay.components.TitleComponent;
 
 /**
- * G-31 (partial): debug overlay. Shows backend, render and display resolution (S1-02 acceptance) and the
- * fallback reason (A-04, G-13). GPU time (A-06) is still to come.
+ * G-31: debug overlay. Shows backend, render and display resolution (S1-02 acceptance), the fallback
+ * reason (A-04, G-13) and GPU time per stage including the upscale pass (A-06).
  * Drawn by RuneLite into the 2D interface, so it stays at native resolution.
  */
 public class UpscalerDebugOverlay extends OverlayPanel
@@ -64,6 +64,16 @@ public class UpscalerDebugOverlay extends OverlayPanel
 		line("Display", stats.displayWidth + " x " + stats.displayHeight);
 		line("MSAA", stats.msaaSamples > 0 ? stats.msaaSamples + "x" : "off");
 		line("Targets", stats.targetFormat);
+		double[] gpu = stats.gpuMs;
+		if (gpu != null)
+		{
+			// A-06, G-31: GPU time per stage
+			for (GpuTimers.Stage stage : GpuTimers.Stage.values())
+			{
+				double ms = gpu[stage.ordinal()];
+				line("GPU " + stage.label, ms < 0 ? "-" : String.format("%.2f ms", ms));
+			}
+		}
 		if (!stats.fallbackReason.isEmpty())
 		{
 			line("Fallback", stats.fallbackReason);
