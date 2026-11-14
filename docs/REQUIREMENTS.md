@@ -205,7 +205,9 @@ class FrameInputs {
 - [ ] All Step 1 MUST rows pass their acceptance checks.
 - [ ] T-01 to T-05 pass on at least one NVIDIA and one non-NVIDIA GPU (AMD, Intel, or Apple).
 - [ ] Before and after screenshots plus FPS numbers at 1440p and 4K recorded in section 8.
-- [ ] README explains build, run in developer mode, and every setting.
+- [x] README explains build, run in developer mode, and every setting.
+
+Status 2026-11-14: README done. The other items are partly met; see D-07 for what passed and what was deferred.
 
 ## 5. Step 2: Temporal upscaling (jitter, depth, camera motion, FSR 2/3)
 
@@ -385,6 +387,7 @@ This section is the project's living memory. Agents append here; nothing is dele
 | D-04 | DLSS through NVIDIA's DLSS SDK (NGX) directly, not Streamline | Streamline's interposer expects to own Vulkan device creation, which conflicts with the bridge. Revisit only for Frame Generation | Proposed, VERIFY |
 | D-05 | OpenGL stays the main renderer; no full Vulkan or WebGPU rewrite | Keeps upstream compatibility and plugin ecosystem; the bridge cost is small for one pass per frame | Proposed |
 | D-06 | G-10 guard (2026-11-14): declare `conflicts = {"GPU", "117 HD"}` so RuneLite turns the other renderer off when either is enabled, plus a startup refusal with a message if any other renderer still owns DrawCallbacks. Shutdown only resets client renderer state when this plugin owns DrawCallbacks. | A refuse-only guard covers just one direction: enabling stock GPU while Upscaler GPU runs would leave both running. RuneLite's `conflicts` is symmetric and is what 117 HD uses. The two can't both be literal: with `conflicts`, RuneLite disables the other plugin before `startUp()`, so the refusal only fires for renderers that don't declare a conflict | Accepted (user) |
+| D-07 | Close Step 1 (2026-11-14) with these items deferred, not passed. (1) **S1-10 / T-03**: formal 50%-vs-100% UI pixel comparison. (2) **S1-15 / T-05**: resizes below 100% (upscaler input/output and FSR 1 intermediate) and recorded GPU memory readings. (3) **S1-04**: 4x MSAA. (4) **Done-when**: T-01–T-05 on a non-NVIDIA GPU, before/after screenshots and FPS at 1440p and 4K (7.2 method), and the remaining 7.1 scenes for T-02. (5) **S1-12** (SHOULD): mip bias default; AMD recommends negative, the spec says 0, user decision pending. (6) **G-13** in-game runtime fallback (unit-tested only). (7) S1-09 NIS (MAY) not built. Passed with evidence in 8.4: S1-01, S1-02, S1-03, S1-05, S1-06, S1-07, S1-08, S1-13, G-10, G-31; S1-11 by user check in fixed, resizable and stretched modes; S1-15 toggle half (46 plugin stops, 0 GL objects left over). | The user has only an NVIDIA GPU and an account limited to Tutorial Island. The deferred checks are low risk given the evidence: UI identical across backends and 50/67% (T-02), 2x/8x/16x MSAA clean at 33–100%, 0 leaked GL objects over 46 toggles. The user chose to move on rather than run more manual tests now. Revisit these before merging `step-1-spatial` to `master` (G-08) or before any public release. | Accepted (user) |
 
 ### 8.2 Open questions
 
