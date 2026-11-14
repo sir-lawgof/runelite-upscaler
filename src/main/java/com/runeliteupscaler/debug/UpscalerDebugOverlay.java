@@ -66,6 +66,15 @@ public class UpscalerDebugOverlay extends OverlayPanel
 		// S2-12
 		line("Temporal", stats.frameIndex < 0 ? "off"
 			: "frame " + stats.frameIndex + ", " + String.format("%.1f ms", stats.frameTimeMs));
+		if (stats.frameIndex >= 0)
+		{
+			// S2-03: jitter readout cycles through the phase count
+			line("Jitter", stats.jitterPhaseCount == 0 ? "off" : String.format("%+.3f, %+.3f px (%d/%d)",
+				stats.jitterX, stats.jitterY, stats.jitterPhase + 1, stats.jitterPhaseCount));
+			// S2-08
+			line("Resets", stats.resetCount + " (last: " + stats.lastReset + ")");
+		}
+		line("Mip bias", String.format("%.2f", stats.mipBias)); // S2-09
 		line("Targets", stats.targetFormat);
 		// S1-15: leak checks. GL objects held by this plugin's code; GPU memory for the whole device.
 		line("GL objects", GlObjects.total() + " (" + GlObjects.breakdown() + ")");

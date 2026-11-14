@@ -162,6 +162,20 @@ public interface GpuPluginConfig extends Config
 		return DebugView.OFF;
 	}
 
+	@ConfigItem(
+		keyName = "jitterTest",
+		name = "Jitter (test)",
+		description = "Development option: act as if a temporal upscaler were active. Applies sub-pixel jitter "
+			+ "(S2-04) and the temporal mip bias (S2-09). The scene will shimmer slightly because nothing removes "
+			+ "the jitter yet. Needs Temporal inputs.",
+		position = 8,
+		section = upscalingSection
+	)
+	default boolean jitterTest()
+	{
+		return false;
+	}
+
 	// ---- End of upscaler settings ----
 
 	@Range(

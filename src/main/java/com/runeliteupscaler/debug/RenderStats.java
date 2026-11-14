@@ -44,6 +44,14 @@ public final class RenderStats
 	/** S2-12: -1 when temporal inputs are off */
 	public long frameIndex = -1;
 	public float frameTimeMs;
+	/** S2-03: jitter in render pixels and phase; phase count 0 when jitter is off */
+	public float jitterX, jitterY;
+	public int jitterPhase, jitterPhaseCount;
+	/** S2-08 */
+	public long resetCount;
+	public String lastReset = "-";
+	/** S2-09 */
+	public float mipBias;
 	/** S1-03 */
 	public String targetFormat = "-";
 	/** A-06: smoothed GPU ms per {@link GpuTimers.Stage}, -1 = no result yet; null when timing is off */

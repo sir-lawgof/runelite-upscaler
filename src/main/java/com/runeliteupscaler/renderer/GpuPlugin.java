@@ -79,6 +79,8 @@ import com.runeliteupscaler.debug.DebugView;
 import com.runeliteupscaler.debug.DebugViews;
 import com.runeliteupscaler.debug.GlObjects;
 import com.runeliteupscaler.temporal.CameraMotionPass;
+import com.runeliteupscaler.temporal.HistoryReset;
+import com.runeliteupscaler.temporal.Jitter;
 import com.runeliteupscaler.temporal.Reprojection;
 import com.runeliteupscaler.temporal.TemporalState;
 import com.runeliteupscaler.debug.GpuTimers;
@@ -96,6 +98,7 @@ import com.runeliteupscaler.upscale.FrameInputs;
 import com.runeliteupscaler.upscale.GpuCaps;
 import com.runeliteupscaler.upscale.Upscaler;
 import com.runeliteupscaler.upscale.UpscalerChain;
+import com.runeliteupscaler.upscale.Vec2;
 import java.util.List;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.ClientUI;
@@ -209,6 +212,11 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private final TemporalState temporalState = new TemporalState();
 	private final DebugViews debugViews = new DebugViews();
 	private final CameraMotionPass cameraMotionPass = new CameraMotionPass(); // S2-06
+	private final HistoryReset historyReset = new HistoryReset(); // S2-08
+	private int lastTargetDisplayWidth, lastTargetDisplayHeight;
+	// S2-09: last LOD bias set on the texture array (reapplied if the array is recreated)
+	private float lastMipBias;
+	private int lastMipBiasTextureArray = -1;
 	/** Q-07: true when glClipControl(ZERO_TO_ONE) is active, so window depth = 100 / z_view */
 	private boolean depthZeroToOne;
 	// S1-15: GL_NVX_gpu_memory_info, read about once a second while the overlay is shown
@@ -1062,6 +1070,11 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		{
 			log.debug("Scene target {}x{} ({}x MSAA{}) for display {}x{} at {}%",
 				renderWidth, renderHeight, samples, temporal ? ", temporal" : "", displayWidth, displayHeight, scalePercent);
+			// S2-08: a new display size is a resize; otherwise the render size (scale) or mode changed
+			historyReset.request(displayWidth != lastTargetDisplayWidth || displayHeight != lastTargetDisplayHeight
+				? HistoryReset.Reason.RESIZE : HistoryReset.Reason.SCALE_CHANGE);
+			lastTargetDisplayWidth = displayWidth;
+			lastTargetDisplayHeight = displayHeight;
 			// A-02: new sizes also resize the backend and reset its history
 			Upscaler upscaler = upscalerChain.active();
 			if (upscaler != null)
@@ -1119,25 +1132,83 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		Mat4.mul(projectionMatrix, Mat4.rotateX(cameraPitch));
 		Mat4.mul(projectionMatrix, Mat4.rotateY(cameraYaw));
 		Mat4.mul(projectionMatrix, Mat4.translate(-cameraX, -cameraY, -cameraZ));
-		glUniformMatrix4fv(uniWorldProj, false, projectionMatrix);
 
 		// S2-05, S2-12: this and last frame's unjittered view-projection, frame index and frame time (A-05)
+		float[] sceneProjection = projectionMatrix;
+		final boolean jitterOn = temporal && config.jitterTest(); // D-08: stands in for an active temporal backend
 		if (temporal)
 		{
+			if (temporalState.frameIndex() < 0)
+			{
+				historyReset.request(HistoryReset.Reason.PLUGIN_ENABLE); // S2-08: temporal inputs just turned on
+			}
 			temporalState.beginFrame(projectionMatrix, System.nanoTime());
 			frameInputs.viewProj = temporalState.viewProj();
 			frameInputs.prevViewProj = temporalState.prevViewProj();
 			frameInputs.frameTimeMs = temporalState.frameTimeMs();
 			renderStats.frameIndex = temporalState.frameIndex();
 			renderStats.frameTimeMs = temporalState.frameTimeMs();
+
+			// S2-03, S2-04: jitter the scene projection only. Motion uses the unjittered matrices (S2-06), and the
+			// UI and RuneLite overlays use the client's own projection, so they don't shake.
+			if (jitterOn)
+			{
+				int phases = Jitter.phaseCount(renderWidth, displayWidth);
+				Vec2 jitter = Jitter.offset(temporalState.frameIndex(), phases);
+				sceneProjection = Jitter.apply(projectionMatrix, jitter, renderWidth, renderHeight);
+				frameInputs.jitter = jitter;
+				renderStats.jitterX = jitter.x;
+				renderStats.jitterY = jitter.y;
+				renderStats.jitterPhase = (int) (temporalState.frameIndex() % phases);
+				renderStats.jitterPhaseCount = phases;
+			}
+			else
+			{
+				frameInputs.jitter = Vec2.ZERO;
+				renderStats.jitterPhaseCount = 0;
+			}
+
+			// S2-08: camera jumps count as cuts; consume this frame's reset, if any
+			historyReset.cameraPosition(cameraX, cameraY, cameraZ);
+			HistoryReset.Reason reset = historyReset.consume();
+			frameInputs.reset = reset != null;
+			if (reset != null)
+			{
+				log.debug("History reset: {}", reset.label);
+				if (active != null)
+				{
+					active.resetHistory();
+				}
+			}
+			renderStats.resetCount = historyReset.resetCount();
+			renderStats.lastReset = historyReset.lastReason() == null ? "-" : historyReset.lastReason().label;
 		}
 		else if (temporalState.frameIndex() >= 0)
 		{
 			temporalState.reset();
+			historyReset.forgetCamera();
 			frameInputs.viewProj = frameInputs.prevViewProj = null;
 			frameInputs.frameTimeMs = 0;
+			frameInputs.jitter = null;
+			frameInputs.reset = false;
 			renderStats.frameIndex = -1;
+			renderStats.jitterPhaseCount = 0;
 		}
+		glUniformMatrix4fv(uniWorldProj, false, sceneProjection);
+
+		// S2-09: texture LOD bias from the backend (0 for spatial backends, S1-12); the temporal formula while
+		// the jitter test stands in for a temporal backend. Only has an effect with mipmaps on (anisotropic >= 1).
+		final float mipBias = jitterOn ? Jitter.temporalMipBias(renderWidth, displayWidth)
+			: active != null && renderTargets.isScaled()
+				? active.mipBias(new Size(renderWidth, renderHeight), new Size(displayWidth, displayHeight)) : 0f;
+		if (textureArrayId != -1 && (mipBias != lastMipBias || textureArrayId != lastMipBiasTextureArray))
+		{
+			glBindTexture(GL_TEXTURE_2D_ARRAY, textureArrayId);
+			glTexParameterf(GL_TEXTURE_2D_ARRAY, GL_TEXTURE_LOD_BIAS, mipBias);
+			lastMipBias = mipBias;
+			lastMipBiasTextureArray = textureArrayId;
+		}
+		renderStats.mipBias = mipBias;
 
 		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
 
@@ -1354,8 +1425,13 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	{
 		// S1-13: start at the configured backend (Off has none; the scale is forced to 100% instead)
 		String requested = config.upscalerBackend().upscalerName();
+		Upscaler previous = upscalerChain.active();
 		Upscaler upscaler = upscalerChain.select(requested == null ? "" : requested, gpuCaps);
 		String reason = upscalerChain.fallbackReason();
+		if (previous != null && upscaler != previous)
+		{
+			historyReset.request(HistoryReset.Reason.BACKEND_SWITCH); // S2-08
+		}
 		if (upscaler == null)
 		{
 			log.warn("No upscaler backend available: {}", reason);
@@ -1936,12 +2012,25 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 			}
 			textureArrayId = -1;
 			lastAnisotropicFilteringLevel = -1;
+			lastMipBiasTextureArray = -1; // S2-09: reapply the bias to the new texture array
+		}
+
+		// S2-08: login and logout are cuts for temporal history
+		if (state == GameState.LOGGED_IN)
+		{
+			historyReset.request(HistoryReset.Reason.LOGIN);
+		}
+		else if (state == GameState.LOGIN_SCREEN)
+		{
+			historyReset.request(HistoryReset.Reason.LOGOUT);
+			historyReset.forgetCamera();
 		}
 	}
 
 	@Override
 	public void loadScene(WorldView worldView, Scene scene)
 	{
+		historyReset.request(HistoryReset.Reason.SCENE_LOAD); // S2-08: region or scene reload
 		if (scene.getWorldViewId() != WorldView.TOPLEVEL)
 		{
 			loadSubScene(worldView, scene);
