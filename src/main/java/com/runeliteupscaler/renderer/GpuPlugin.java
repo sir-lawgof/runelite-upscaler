@@ -75,7 +75,10 @@ import net.runelite.client.plugins.PluginManager;
 import com.runeliteupscaler.renderer.config.AntiAliasingMode;
 import com.runeliteupscaler.renderer.config.UIScalingMode;
 import com.runeliteupscaler.renderer.template.Template;
+import com.runeliteupscaler.debug.DebugView;
+import com.runeliteupscaler.debug.DebugViews;
 import com.runeliteupscaler.debug.GlObjects;
+import com.runeliteupscaler.temporal.TemporalState;
 import com.runeliteupscaler.debug.GpuTimers;
 import com.runeliteupscaler.debug.RenderStats;
 import com.runeliteupscaler.debug.UpscalerDebugOverlay;
@@ -200,6 +203,11 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private final RenderStats renderStats = new RenderStats();
 	// A-06: GPU time per stage; makes no GL calls unless the debug overlay is on
 	private final GpuTimers gpuTimers = new GpuTimers(renderStats);
+	// Step 2: temporal state (S2-05, S2-12) and debug views (G-32)
+	private final TemporalState temporalState = new TemporalState();
+	private final DebugViews debugViews = new DebugViews();
+	/** Q-07: true when glClipControl(ZERO_TO_ONE) is active, so window depth = 100 / z_view */
+	private boolean depthZeroToOne;
 	// S1-15: GL_NVX_gpu_memory_info, read about once a second while the overlay is shown
 	private static final int GL_GPU_MEMORY_INFO_TOTAL_AVAILABLE_MEMORY_NVX = 0x9048;
 	private static final int GL_GPU_MEMORY_INFO_CURRENT_AVAILABLE_VIDMEM_NVX = 0x9049;
@@ -386,6 +394,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				}
 
 				lwjglInitted = true;
+				depthZeroToOne = glCapabilities.OpenGL45; // Q-07: glClipControl below is only called with GL 4.5
 
 				// A-04: backends in fallback order: FSR 1 (S1-06), then bilinear (S1-05) as the final fallback
 				gpuCaps = new GpuCaps(glGetString(GL_RENDERER), glGetString(GL_VERSION), glCapabilities.OpenGL43);
@@ -572,6 +581,8 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					upscalerChain = null;
 				}
 				gpuTimers.close(); // A-06, G-11
+				debugViews.close(); // G-32, G-11
+				temporalState.reset();
 				renderTargets.close(); // A-02, G-11
 
 				// S1-15, G-11: everything this plugin's code created must be gone by now
@@ -1040,10 +1051,13 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		// A-02: recreate the scene target when the render size or sample count changes (window resize, scale change)
 		// S1-03: target color format, switched live by the development flag
 		final TargetFormat targetFormat = config.highPrecisionTargets() ? TargetFormat.RGBA16F : TargetFormat.RGBA8;
-		if (renderTargets.ensure(renderWidth, renderHeight, displayWidth, displayHeight, aaSamples, targetFormat))
+		// S2-01, S2-02, D-08: temporal inputs need a sampleable depth texture and no MSAA
+		final boolean temporal = config.temporalInputs();
+		final int samples = temporal ? 0 : aaSamples;
+		if (renderTargets.ensure(renderWidth, renderHeight, displayWidth, displayHeight, samples, targetFormat, temporal))
 		{
-			log.debug("Scene target {}x{} ({}x MSAA) for display {}x{} at {}%",
-				renderWidth, renderHeight, aaSamples, displayWidth, displayHeight, scalePercent);
+			log.debug("Scene target {}x{} ({}x MSAA{}) for display {}x{} at {}%",
+				renderWidth, renderHeight, samples, temporal ? ", temporal" : "", displayWidth, displayHeight, scalePercent);
 			// A-02: new sizes also resize the backend and reset its history
 			Upscaler upscaler = upscalerChain.active();
 			if (upscaler != null)
@@ -1067,7 +1081,8 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		renderStats.renderHeight = renderHeight;
 		renderStats.displayWidth = displayWidth;
 		renderStats.displayHeight = displayHeight;
-		renderStats.msaaSamples = aaSamples;
+		renderStats.msaaSamples = samples;
+		renderStats.msaaForcedOff = temporal && aaSamples > 0; // S2-01
 		renderStats.targetFormat = targetFormat.toString();
 
 		glUseProgram(glProgram);
@@ -1101,6 +1116,24 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 		Mat4.mul(projectionMatrix, Mat4.rotateY(cameraYaw));
 		Mat4.mul(projectionMatrix, Mat4.translate(-cameraX, -cameraY, -cameraZ));
 		glUniformMatrix4fv(uniWorldProj, false, projectionMatrix);
+
+		// S2-05, S2-12: this and last frame's unjittered view-projection, frame index and frame time (A-05)
+		if (temporal)
+		{
+			temporalState.beginFrame(projectionMatrix, System.nanoTime());
+			frameInputs.viewProj = temporalState.viewProj();
+			frameInputs.prevViewProj = temporalState.prevViewProj();
+			frameInputs.frameTimeMs = temporalState.frameTimeMs();
+			renderStats.frameIndex = temporalState.frameIndex();
+			renderStats.frameTimeMs = temporalState.frameTimeMs();
+		}
+		else if (temporalState.frameIndex() >= 0)
+		{
+			temporalState.reset();
+			frameInputs.viewProj = frameInputs.prevViewProj = null;
+			frameInputs.frameTimeMs = 0;
+			renderStats.frameIndex = -1;
+		}
 
 		glUniformMatrix4fv(uniEntityProj, false, IDENTITY);
 
@@ -1243,11 +1276,22 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 		// Stage 5, present: into the 3D viewport rectangle on the window (S1-02, S1-11)
 		gpuTimers.begin(GpuTimers.Stage.PRESENT); // A-06
-		glBindFramebuffer(GL_READ_FRAMEBUFFER, source);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, defaultFbo);
-		glBlitFramebuffer(0, 0, sourceWidth, sourceHeight,
-			displayX, displayY, displayX + displayWidth, displayY + displayHeight,
-			GL_COLOR_BUFFER_BIT, filter);
+		boolean debugViewShown = false;
+		if (renderTargets.isTemporal() && config.upscalerDebugView() == DebugView.DEPTH)
+		{
+			// G-32, S2-02: show the depth buffer instead of the final image
+			debugViewShown = debugViews.drawDepth(renderTargets.depthTexture(),
+				displayX, displayY, displayWidth, displayHeight, depthZeroToOne,
+				getDrawDistance() * Perspective.LOCAL_TILE_SIZE);
+		}
+		if (!debugViewShown)
+		{
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, source);
+			glBlitFramebuffer(0, 0, sourceWidth, sourceHeight,
+				displayX, displayY, displayX + displayWidth, displayY + displayHeight,
+				GL_COLOR_BUFFER_BIT, filter);
+		}
 		gpuTimers.end(GpuTimers.Stage.PRESENT);
 
 		// Reset
@@ -2409,7 +2453,21 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	@Subscribe
 	private void onCommandExecuted(CommandExecuted event)
 	{
-		if (event.getCommand().equals("gpumem"))
+		if (event.getCommand().equals("upscaler"))
+		{
+			// S2-05: debug dump of the temporal state (developer mode command ::upscaler)
+			clientThread.invokeLater(() ->
+			{
+				log.info("Upscaler: temporal inputs {}, frame {}, frame time {} ms, has previous {}",
+					config.temporalInputs() ? "on" : "off", temporalState.frameIndex(),
+					String.format("%.2f", temporalState.frameTimeMs()), temporalState.hasPrevious());
+				log.info("Upscaler: depth = {} (reversed-Z, infinite far, near z = 100)",
+					depthZeroToOne ? "100 / z_view" : "0.5 + 50 / z_view");
+				log.info("Upscaler: viewProj (unjittered)\n{}", TemporalState.format(temporalState.viewProj()));
+				log.info("Upscaler: prevViewProj (unjittered)\n{}", TemporalState.format(temporalState.prevViewProj()));
+			});
+		}
+		else if (event.getCommand().equals("gpumem"))
 		{
 			int totalSzKb = 0;
 			for (int i = 0; i < rts.length; ++i)

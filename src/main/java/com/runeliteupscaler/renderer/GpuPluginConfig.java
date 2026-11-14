@@ -30,6 +30,7 @@ import net.runelite.client.config.ConfigItem;
 import net.runelite.client.config.ConfigSection;
 import net.runelite.client.config.Range;
 import net.runelite.client.config.Units;
+import com.runeliteupscaler.debug.DebugView;
 import com.runeliteupscaler.targets.ScalePreset;
 import com.runeliteupscaler.upscale.UpscalerBackend;
 import static com.runeliteupscaler.renderer.GpuPlugin.MAX_DISTANCE;
@@ -133,6 +134,32 @@ public interface GpuPluginConfig extends Config
 	default boolean highPrecisionTargets()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "temporalInputs",
+		name = "Temporal inputs",
+		description = "Development option (Step 2, D-08): produce the inputs a temporal upscaler needs (depth texture, "
+			+ "matrices, frame timing). Turns MSAA off (S2-01). No visible change except through Debug view.",
+		position = 6,
+		section = upscalingSection
+	)
+	default boolean temporalInputs()
+	{
+		return false;
+	}
+
+	@ConfigItem(
+		keyName = "upscalerDebugView",
+		name = "Debug view",
+		description = "Show an intermediate buffer in the 3D viewport instead of the final image (G-32). "
+			+ "Needs Temporal inputs.",
+		position = 7,
+		section = upscalingSection
+	)
+	default DebugView upscalerDebugView()
+	{
+		return DebugView.OFF;
 	}
 
 	// ---- End of upscaler settings ----

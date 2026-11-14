@@ -39,6 +39,11 @@ public final class RenderStats
 	public int displayWidth;
 	public int displayHeight;
 	public int msaaSamples;
+	/** S2-01: MSAA is configured but turned off because temporal inputs are on */
+	public boolean msaaForcedOff;
+	/** S2-12: -1 when temporal inputs are off */
+	public long frameIndex = -1;
+	public float frameTimeMs;
 	/** S1-03 */
 	public String targetFormat = "-";
 	/** A-06: smoothed GPU ms per {@link GpuTimers.Stage}, -1 = no result yet; null when timing is off */

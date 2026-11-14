@@ -32,7 +32,7 @@ import static org.lwjgl.opengl.GL33C.*;
  * G-04: compiles a vertex + fragment program from GLSL resources through the GPU plugin's {@link Template}
  * loader (same #include handling as the plugin's own shaders).
  */
-final class GlProgram
+public final class GlProgram
 {
 	private GlProgram()
 	{
@@ -41,7 +41,7 @@ final class GlProgram
 	/**
 	 * @throws IllegalStateException with the driver's log if compiling or linking fails
 	 */
-	static int compile(Template template, String vertexFile, String fragmentFile)
+	public static int compile(Template template, String vertexFile, String fragmentFile)
 	{
 		int vs = compileShader(template, GL_VERTEX_SHADER, vertexFile);
 		int fs;

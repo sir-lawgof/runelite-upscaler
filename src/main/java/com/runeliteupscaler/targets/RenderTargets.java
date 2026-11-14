@@ -53,6 +53,9 @@ public final class RenderTargets implements AutoCloseable
 	private int sceneFbo;
 	private int sceneColorRbo;
 	private int sceneDepthRbo;
+	/** S2-02: when temporal inputs are on, depth is a sampleable 32-bit float texture instead of a renderbuffer. */
+	private int sceneDepthTex;
+	private boolean temporal;
 
 	/** Render-res single-sample scene color; null unless {@link #needsResolve()}. */
 	private Texture color;
@@ -60,18 +63,23 @@ public final class RenderTargets implements AutoCloseable
 	private Texture output;
 
 	/**
-	 * A-02: make sure the targets exist for these sizes, sample count and format, recreating them if not.
+	 * A-02: make sure the targets exist for these sizes, sample count, format and mode, recreating them if not.
 	 * Leaves GL_FRAMEBUFFER, GL_RENDERBUFFER and GL_TEXTURE_2D bindings changed; the caller rebinds.
 	 *
+	 * @param temporal S2-02: depth as a sampleable texture; requires {@code samples == 0} (S2-01)
 	 * @return true if the targets were (re)created
 	 */
 	public boolean ensure(int renderWidth, int renderHeight, int displayWidth, int displayHeight, int samples,
-		TargetFormat format)
+		TargetFormat format, boolean temporal)
 	{
+		if (temporal && samples != 0)
+		{
+			throw new IllegalArgumentException("S2-01: temporal targets must not be multisampled");
+		}
 		if (sceneFbo != 0
 			&& renderWidth == this.renderWidth && renderHeight == this.renderHeight
 			&& displayWidth == this.displayWidth && displayHeight == this.displayHeight
-			&& samples == this.samples && format == this.format)
+			&& samples == this.samples && format == this.format && temporal == this.temporal)
 		{
 			return false;
 		}
@@ -84,6 +92,7 @@ public final class RenderTargets implements AutoCloseable
 		this.displayHeight = displayHeight;
 		this.samples = samples;
 		this.format = format;
+		this.temporal = temporal;
 
 		if (samples > 0)
 		{
@@ -104,11 +113,29 @@ public final class RenderTargets implements AutoCloseable
 		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, format.sceneInternalFormat, renderWidth, renderHeight);
 		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_COLOR_ATTACHMENT0, GL_RENDERBUFFER, sceneColorRbo);
 
-		sceneDepthRbo = glGenRenderbuffers();
-		GlObjects.created(GlObjects.Type.RENDERBUFFER, 1);
-		glBindRenderbuffer(GL_RENDERBUFFER, sceneDepthRbo);
-		glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, SCENE_DEPTH_FORMAT, renderWidth, renderHeight);
-		glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepthRbo);
+		if (temporal)
+		{
+			// S2-02: same format as the stock depth renderbuffer, but a texture so later passes can sample it
+			sceneDepthTex = glGenTextures();
+			GlObjects.created(GlObjects.Type.TEXTURE, 1);
+			glBindTexture(GL_TEXTURE_2D, sceneDepthTex);
+			glTexImage2D(GL_TEXTURE_2D, 0, SCENE_DEPTH_FORMAT, renderWidth, renderHeight, 0, GL_DEPTH_COMPONENT, GL_FLOAT, 0);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MIN_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_MAG_FILTER, GL_NEAREST);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_S, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_WRAP_T, GL_CLAMP_TO_EDGE);
+			glTexParameteri(GL_TEXTURE_2D, GL_TEXTURE_COMPARE_MODE, GL_NONE);
+			glBindTexture(GL_TEXTURE_2D, 0);
+			glFramebufferTexture2D(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_TEXTURE_2D, sceneDepthTex, 0);
+		}
+		else
+		{
+			sceneDepthRbo = glGenRenderbuffers();
+			GlObjects.created(GlObjects.Type.RENDERBUFFER, 1);
+			glBindRenderbuffer(GL_RENDERBUFFER, sceneDepthRbo);
+			glRenderbufferStorageMultisample(GL_RENDERBUFFER, samples, SCENE_DEPTH_FORMAT, renderWidth, renderHeight);
+			glFramebufferRenderbuffer(GL_FRAMEBUFFER, GL_DEPTH_ATTACHMENT, GL_RENDERBUFFER, sceneDepthRbo);
+		}
 
 		checkComplete("scene");
 		glBindRenderbuffer(GL_RENDERBUFFER, 0);
@@ -144,6 +171,17 @@ public final class RenderTargets implements AutoCloseable
 	public TargetFormat format()
 	{
 		return format;
+	}
+
+	/** S2-02: GL name of the render-res depth texture (reversed-Z, see 8.4 / Q-07); 0 unless temporal. */
+	public int depthTexture()
+	{
+		return sceneDepthTex;
+	}
+
+	public boolean isTemporal()
+	{
+		return temporal;
 	}
 
 	/**
@@ -227,6 +265,13 @@ public final class RenderTargets implements AutoCloseable
 			GlObjects.deleted(GlObjects.Type.RENDERBUFFER, 1);
 			sceneDepthRbo = 0;
 		}
+		if (sceneDepthTex != 0)
+		{
+			glDeleteTextures(sceneDepthTex);
+			GlObjects.deleted(GlObjects.Type.TEXTURE, 1);
+			sceneDepthTex = 0;
+		}
+		temporal = false;
 		renderWidth = renderHeight = displayWidth = displayHeight = samples = 0;
 		format = null;
 	}
