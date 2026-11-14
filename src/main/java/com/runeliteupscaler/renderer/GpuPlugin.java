@@ -99,6 +99,7 @@ import com.runeliteupscaler.upscale.GpuCaps;
 import com.runeliteupscaler.upscale.Upscaler;
 import com.runeliteupscaler.upscale.UpscalerChain;
 import com.runeliteupscaler.upscale.Vec2;
+import com.runeliteupscaler.vkbridge.InteropSupport;
 import java.util.List;
 import net.runelite.client.ui.overlay.OverlayManager;
 import net.runelite.client.ui.ClientUI;
@@ -213,6 +214,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 	private final DebugViews debugViews = new DebugViews();
 	private final CameraMotionPass cameraMotionPass = new CameraMotionPass(); // S2-06
 	private final HistoryReset historyReset = new HistoryReset(); // S2-08
+	private InteropSupport interop; // S2-20, S2-21
 	private int lastTargetDisplayWidth, lastTargetDisplayHeight;
 	// S2-09: last LOD bias set on the texture array (reapplied if the array is recreated)
 	private float lastMipBias;
@@ -406,6 +408,15 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 
 				lwjglInitted = true;
 				depthZeroToOne = glCapabilities.OpenGL45; // Q-07: glClipControl below is only called with GL 4.5
+
+				// S2-20, S2-21: OpenGL side of the GL-Vulkan bridge (extensions and device identifiers)
+				interop = InteropSupport.check(glCapabilities);
+				log.info("GL-Vulkan interop (GL side): {}; device UUID {}, driver UUID {}{}",
+					interop.supported ? "supported" : interop.reason,
+					interop.deviceUuids.isEmpty() ? "n/a" : String.join(" / ", interop.deviceUuids),
+					interop.driverUuid.isEmpty() ? "n/a" : interop.driverUuid,
+					interop.deviceLuid.isEmpty() ? "" : ", LUID " + interop.deviceLuid + " node mask " + interop.deviceNodeMask);
+				renderStats.interop = interop.supported ? "GL side OK" : interop.reason;
 
 				// A-04: backends in fallback order: FSR 1 (S1-06), then bilinear (S1-05) as the final fallback
 				gpuCaps = new GpuCaps(glGetString(GL_RENDERER), glGetString(GL_VERSION), glCapabilities.OpenGL43);
@@ -2578,6 +2589,12 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 					String.format("%.2f", temporalState.frameTimeMs()), temporalState.hasPrevious());
 				log.info("Upscaler: depth = {} (reversed-Z, infinite far, near z = 100)",
 					depthZeroToOne ? "100 / z_view" : "0.5 + 50 / z_view");
+				if (interop != null)
+				{
+					log.info("Upscaler: GL-Vulkan interop (GL side) {}; device UUIDs {}; driver UUID {}; LUID {} node mask {}",
+						interop.supported ? "supported" : interop.reason, interop.deviceUuids, interop.driverUuid,
+						interop.deviceLuid.isEmpty() ? "n/a" : interop.deviceLuid, interop.deviceNodeMask);
+				}
 				log.info("Upscaler: viewProj (unjittered)\n{}", TemporalState.format(temporalState.viewProj()));
 				log.info("Upscaler: prevViewProj (unjittered)\n{}", TemporalState.format(temporalState.prevViewProj()));
 			});

@@ -52,6 +52,8 @@ public final class RenderStats
 	public String lastReset = "-";
 	/** S2-09 */
 	public float mipBias;
+	/** S2-21: GL side of the GL-Vulkan bridge */
+	public String interop = "-";
 	/** S1-03 */
 	public String targetFormat = "-";
 	/** A-06: smoothed GPU ms per {@link GpuTimers.Stage}, -1 = no result yet; null when timing is off */
