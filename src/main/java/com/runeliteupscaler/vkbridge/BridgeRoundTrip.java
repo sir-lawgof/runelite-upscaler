@@ -100,6 +100,10 @@ public final class BridgeRoundTrip implements AutoCloseable
 	{
 		/** Full round trip: GL writes input, Vulkan copies input to output, GL presents output. */
 		COPY("Copy"),
+		/** Diagnostic: like Copy, but plain barriers instead of acquiring from / releasing to the external queue family. */
+		COPY_NO_OWNERSHIP("Copy (no ownership transfer)"),
+		/** Diagnostic: like Copy, but glFinish before the hand-over (rules timing in or out). */
+		COPY_FINISH("Copy + glFinish"),
 		/** GL writes the shared input image and presents it directly; Vulkan is not used each frame. */
 		GL_ONLY("GL only"),
 		/** Vulkan clears the output to magenta each frame (input unused); GL presents output. */
@@ -198,6 +202,10 @@ public final class BridgeRoundTrip implements AutoCloseable
 
 		// GL -> Vulkan: images handed over in the layouts the Vulkan commands expect
 		int[] textures = {input.glTexture, output.glTexture};
+		if (mode == Mode.COPY_FINISH)
+		{
+			glFinish(); // diagnostic: GL has fully finished writing the input before the hand-over
+		}
 		glSignalSemaphoreEXT(glDone.gl, NO_BUFFERS, textures, GL_LAYOUTS);
 		glFlush(); // the signal must reach the GPU before Vulkan's submission waits on it
 
@@ -248,10 +256,10 @@ public final class BridgeRoundTrip implements AutoCloseable
 			VkImageMemoryBarrier.Buffer acquire = VkImageMemoryBarrier.calloc(2, stack);
 			barrier(acquire.get(0), input.image, 0, VK_ACCESS_TRANSFER_READ_BIT,
 				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-				VK_QUEUE_FAMILY_EXTERNAL, vulkan.queueFamily());
+				externalFamily(), ownFamily());
 			barrier(acquire.get(1), output.image, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
 				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-				VK_QUEUE_FAMILY_EXTERNAL, vulkan.queueFamily());
+				externalFamily(), ownFamily());
 			// srcStage must be the stage the glDone wait blocks (TRANSFER), so the acquire is chained after GL's work.
 			// With TOP_OF_PIPE it could run before GL finished, and the copy read black (8.4).
 			vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
@@ -288,10 +296,10 @@ public final class BridgeRoundTrip implements AutoCloseable
 			VkImageMemoryBarrier.Buffer release = VkImageMemoryBarrier.calloc(2, stack);
 			barrier(release.get(0), input.image, VK_ACCESS_TRANSFER_READ_BIT, 0,
 				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
+				ownFamily(), externalFamily());
 			barrier(release.get(1), output.image, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
 				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
-				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
+				ownFamily(), externalFamily());
 			vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 				0, null, null, release);
 
@@ -314,9 +322,9 @@ public final class BridgeRoundTrip implements AutoCloseable
 			SharedImage.check(vkBeginCommandBuffer(cb, bi), "vkBeginCommandBuffer");
 			VkImageMemoryBarrier.Buffer b = VkImageMemoryBarrier.calloc(2, stack);
 			barrier(b.get(0), input.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
+				ownFamily(), externalFamily());
 			barrier(b.get(1), output.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
+				ownFamily(), externalFamily());
 			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 				0, null, null, b);
 			SharedImage.check(vkEndCommandBuffer(cb), "vkEndCommandBuffer");
@@ -330,6 +338,18 @@ public final class BridgeRoundTrip implements AutoCloseable
 			vkFreeCommandBuffers(device, commandPool, cb);
 		}
 		glWaitSemaphoreEXT(vkDone.gl, NO_BUFFERS, new int[]{input.glTexture, output.glTexture}, GL_LAYOUTS);
+	}
+
+	/** Queue family for the GL side: external, or ignored when ownership transfers are off (diagnostic). */
+	private int externalFamily()
+	{
+		return mode == Mode.COPY_NO_OWNERSHIP ? VK_QUEUE_FAMILY_IGNORED : VK_QUEUE_FAMILY_EXTERNAL;
+	}
+
+	/** Queue family for the Vulkan side: ours, or ignored when ownership transfers are off (diagnostic). */
+	private int ownFamily()
+	{
+		return mode == Mode.COPY_NO_OWNERSHIP ? VK_QUEUE_FAMILY_IGNORED : vulkan.queueFamily();
 	}
 
 	private static void barrier(VkImageMemoryBarrier b, long image, int srcAccess, int dstAccess,
