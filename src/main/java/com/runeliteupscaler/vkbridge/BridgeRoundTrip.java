@@ -320,13 +320,34 @@ public final class BridgeRoundTrip implements AutoCloseable
 				.sType$Default()
 				.flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 			SharedImage.check(vkBeginCommandBuffer(cb, bi), "vkBeginCommandBuffer");
-			VkImageMemoryBarrier.Buffer b = VkImageMemoryBarrier.calloc(2, stack);
-			barrier(b.get(0), input.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-				ownFamily(), externalFamily());
-			barrier(b.get(1), output.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
-				ownFamily(), externalFamily());
-			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
-				0, null, null, b);
+
+			// Out of UNDEFINED into GENERAL, still owned by Vulkan
+			VkImageMemoryBarrier.Buffer toGeneral = VkImageMemoryBarrier.calloc(2, stack);
+			barrier(toGeneral.get(0), input.image, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+			barrier(toGeneral.get(1), output.image, 0, VK_ACCESS_TRANSFER_WRITE_BIT, VK_IMAGE_LAYOUT_UNDEFINED,
+				VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0, null, null, toGeneral);
+
+			// Clear both once in Vulkan. A fresh image only transitioned out of UNDEFINED left Vulkan's view of it
+			// uninitialised on NVIDIA, so Vulkan read GL's writes as black until the memory had been cleared by
+			// Vulkan at least once (8.4). Clearing initialises it.
+			VkClearColorValue black = VkClearColorValue.calloc(stack);
+			black.float32(0, 0f).float32(1, 0f).float32(2, 0f).float32(3, 1f);
+			VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+			range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+			vkCmdClearColorImage(cb, input.image, VK_IMAGE_LAYOUT_GENERAL, black, range);
+			vkCmdClearColorImage(cb, output.image, VK_IMAGE_LAYOUT_GENERAL, black, range);
+
+			// Release both to GL
+			VkImageMemoryBarrier.Buffer release = VkImageMemoryBarrier.calloc(2, stack);
+			barrier(release.get(0), input.image, VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_IMAGE_LAYOUT_GENERAL,
+				VK_IMAGE_LAYOUT_GENERAL, ownFamily(), externalFamily());
+			barrier(release.get(1), output.image, VK_ACCESS_TRANSFER_WRITE_BIT, 0, VK_IMAGE_LAYOUT_GENERAL,
+				VK_IMAGE_LAYOUT_GENERAL, ownFamily(), externalFamily());
+			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
+				0, null, null, release);
 			SharedImage.check(vkEndCommandBuffer(cb), "vkEndCommandBuffer");
 
 			VkSubmitInfo si = VkSubmitInfo.calloc(stack)
