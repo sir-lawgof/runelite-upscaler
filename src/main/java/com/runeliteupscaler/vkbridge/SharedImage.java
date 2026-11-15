@@ -59,6 +59,8 @@ final class SharedImage implements AutoCloseable
 {
 	final int width;
 	final int height;
+	/** Vulkan image usage flags */
+	final int usage;
 
 	// Vulkan side
 	private final VkDevice device;
@@ -70,16 +72,17 @@ final class SharedImage implements AutoCloseable
 	int glTexture;
 	int glFbo;
 
-	private SharedImage(VkDevice device, int width, int height)
+	private SharedImage(VkDevice device, int width, int height, int usage)
 	{
 		this.device = device;
 		this.width = width;
 		this.height = height;
+		this.usage = usage;
 	}
 
-	static SharedImage create(VkDevice device, int width, int height)
+	static SharedImage create(VkDevice device, int width, int height, int usage)
 	{
-		SharedImage s = new SharedImage(device, width, height);
+		SharedImage s = new SharedImage(device, width, height, usage);
 		try
 		{
 			s.init();
@@ -109,8 +112,7 @@ final class SharedImage implements AutoCloseable
 				.arrayLayers(1)
 				.samples(VK_SAMPLE_COUNT_1_BIT)
 				.tiling(VK_IMAGE_TILING_OPTIMAL)
-				.usage(VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT
-					| VK_IMAGE_USAGE_STORAGE_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT)
+				.usage(usage)
 				.sharingMode(VK_SHARING_MODE_EXCLUSIVE)
 				.initialLayout(VK_IMAGE_LAYOUT_UNDEFINED);
 			ici.extent().width(width).height(height).depth(1);

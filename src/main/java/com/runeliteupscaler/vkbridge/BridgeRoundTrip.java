@@ -65,6 +65,15 @@ public final class BridgeRoundTrip implements AutoCloseable
 	/** GL layouts matching the Vulkan layouts the images keep between frames */
 	private static final int[] GL_LAYOUTS = {GL_LAYOUT_TRANSFER_SRC_EXT, GL_LAYOUT_TRANSFER_DST_EXT};
 
+	/**
+	 * Images GL writes and Vulkan reads: no STORAGE usage. With STORAGE, NVIDIA Vulkan lays the image out without
+	 * colour compression, but GL's glTexStorageMem2DEXT import can't know the usage and may write it compressed,
+	 * so Vulkan read black (8.4). Images Vulkan writes and GL reads keep STORAGE (FSR 2/3 writes its output as one).
+	 */
+	static final int INPUT_USAGE = VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT
+		| VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+	static final int OUTPUT_USAGE = INPUT_USAGE | VK_IMAGE_USAGE_STORAGE_BIT;
+
 	private final VulkanDevice vulkan;
 	private final VkDevice device;
 	private final VkQueue queue;
@@ -160,8 +169,8 @@ public final class BridgeRoundTrip implements AutoCloseable
 			}
 		}
 
-		input = SharedImage.create(device, width, height);
-		output = SharedImage.create(device, width, height);
+		input = SharedImage.create(device, width, height, INPUT_USAGE);
+		output = SharedImage.create(device, width, height, OUTPUT_USAGE);
 		frameCommands = allocate();
 		recordFrame();
 		initialTransition();
