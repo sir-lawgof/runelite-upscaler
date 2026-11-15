@@ -51,6 +51,8 @@ final class SharedSemaphore implements AutoCloseable
 {
 	private final VkDevice device;
 	long vk;
+	/** Win32 NT handle; closed in close() after GL deletes its semaphore */
+	private long handle;
 	int gl;
 
 	private SharedSemaphore(VkDevice device)
@@ -79,12 +81,12 @@ final class SharedSemaphore implements AutoCloseable
 				.handleType(VK_EXTERNAL_SEMAPHORE_HANDLE_TYPE_OPAQUE_WIN32_BIT);
 			PointerBuffer ph = stack.mallocPointer(1);
 			SharedImage.check(vkGetSemaphoreWin32HandleKHR(device, hi, ph), "vkGetSemaphoreWin32HandleKHR");
-			long handle = ph.get(0);
+			s.handle = ph.get(0);
 
 			s.gl = glGenSemaphoresEXT();
 			GlObjects.created(GlObjects.Type.SEMAPHORE, 1);
-			glImportSemaphoreWin32HandleEXT(s.gl, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, handle);
-			Win32.closeHandle(handle);
+			glImportSemaphoreWin32HandleEXT(s.gl, GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, s.handle);
+			// Handle kept open until close() (see SharedImage)
 			int err = glGetError();
 			if (err != GL_NO_ERROR)
 			{
@@ -106,6 +108,8 @@ final class SharedSemaphore implements AutoCloseable
 		if (gl != 0)
 		{
 			glDeleteSemaphoresEXT(gl);
+			Win32.closeHandle(handle);
+			handle = 0;
 			GlObjects.deleted(GlObjects.Type.SEMAPHORE, 1);
 			gl = 0;
 		}

@@ -69,6 +69,8 @@ final class SharedImage implements AutoCloseable
 
 	// OpenGL side
 	private int glMemory;
+	/** Win32 NT handle of the memory; GL import does not take ownership, closed in close() after GL is done */
+	private long handle;
 	int glTexture;
 	int glFbo;
 
@@ -147,13 +149,14 @@ final class SharedImage implements AutoCloseable
 				.handleType(VK_EXTERNAL_MEMORY_HANDLE_TYPE_OPAQUE_WIN32_BIT);
 			PointerBuffer ph = stack.mallocPointer(1);
 			check(vkGetMemoryWin32HandleKHR(device, hi, ph), "vkGetMemoryWin32HandleKHR");
-			long handle = ph.get(0);
+			handle = ph.get(0);
 
 			glMemory = glCreateMemoryObjectsEXT();
 			GlObjects.created(GlObjects.Type.MEMORY_OBJECT, 1);
 			glMemoryObjectParameterivEXT(glMemory, GL_DEDICATED_MEMORY_OBJECT_EXT, new int[]{GL_TRUE});
 			glImportMemoryWin32HandleEXT(glMemory, req.size(), GL_HANDLE_TYPE_OPAQUE_WIN32_EXT, handle);
-			Win32.closeHandle(handle); // GL import doesn't take ownership of NT handles
+			// Keep the NT handle open until close(): closing it right after import left GL with its own storage
+			// instead of the Vulkan memory on NVIDIA (the import seems to resolve the handle later, 8.4)
 
 			glTexture = glGenTextures();
 			GlObjects.created(GlObjects.Type.TEXTURE, 1);
@@ -224,6 +227,8 @@ final class SharedImage implements AutoCloseable
 		if (glMemory != 0)
 		{
 			glDeleteMemoryObjectsEXT(glMemory);
+			Win32.closeHandle(handle);
+			handle = 0;
 			GlObjects.deleted(GlObjects.Type.MEMORY_OBJECT, 1);
 			glMemory = 0;
 		}
