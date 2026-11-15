@@ -33,6 +33,7 @@ import net.runelite.client.config.Units;
 import com.runeliteupscaler.debug.DebugView;
 import com.runeliteupscaler.targets.ScalePreset;
 import com.runeliteupscaler.upscale.UpscalerBackend;
+import com.runeliteupscaler.vkbridge.BridgeRoundTrip;
 import static com.runeliteupscaler.renderer.GpuPlugin.MAX_DISTANCE;
 import static com.runeliteupscaler.renderer.GpuPlugin.MAX_FOG_DEPTH;
 import com.runeliteupscaler.renderer.config.AntiAliasingMode;
@@ -201,6 +202,19 @@ public interface GpuPluginConfig extends Config
 	default boolean bridgeRoundTrip()
 	{
 		return false;
+	}
+
+	@ConfigItem(
+		keyName = "bridgeTestMode",
+		name = "Bridge test mode",
+		description = "Diagnostic for Bridge round trip: Copy = full round trip; GL only = OpenGL writes and shows the "
+			+ "shared image (no Vulkan); Vulkan clear = Vulkan fills the output with magenta.",
+		position = 11,
+		section = upscalingSection
+	)
+	default BridgeRoundTrip.Mode bridgeTestMode()
+	{
+		return BridgeRoundTrip.Mode.COPY;
 	}
 
 	// ---- End of upscaler settings ----

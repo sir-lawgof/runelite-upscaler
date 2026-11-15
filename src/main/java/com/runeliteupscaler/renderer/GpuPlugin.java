@@ -1409,7 +1409,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				{
 					roundTrip = new BridgeRoundTrip(vulkanDevice);
 				}
-				roundTrip.ensure(displayWidth, displayHeight);
+				roundTrip.ensure(displayWidth, displayHeight, config.bridgeTestMode());
 				gpuTimers.begin(GpuTimers.Stage.BRIDGE); // A-06: includes the GPU-side wait for Vulkan's work
 				roundTrip.run(source, sourceWidth, sourceHeight, filter);
 				gpuTimers.end(GpuTimers.Stage.BRIDGE);
@@ -1417,7 +1417,7 @@ public class GpuPlugin extends Plugin implements DrawCallbacks
 				sourceWidth = roundTrip.width();
 				sourceHeight = roundTrip.height();
 				filter = GL_NEAREST;
-				renderStats.bridge = "round trip " + roundTrip.width() + "x" + roundTrip.height()
+				renderStats.bridge = config.bridgeTestMode() + " " + roundTrip.width() + "x" + roundTrip.height()
 					+ ", " + roundTrip.frames() + " frames";
 			}
 			catch (RuntimeException ex)

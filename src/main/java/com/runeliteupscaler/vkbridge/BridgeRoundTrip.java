@@ -28,6 +28,7 @@ import java.nio.LongBuffer;
 import lombok.extern.slf4j.Slf4j;
 import org.lwjgl.PointerBuffer;
 import org.lwjgl.system.MemoryStack;
+import org.lwjgl.vulkan.VkClearColorValue;
 import org.lwjgl.vulkan.VkCommandBuffer;
 import org.lwjgl.vulkan.VkCommandBufferAllocateInfo;
 import org.lwjgl.vulkan.VkCommandBufferBeginInfo;
@@ -35,6 +36,7 @@ import org.lwjgl.vulkan.VkCommandPoolCreateInfo;
 import org.lwjgl.vulkan.VkDevice;
 import org.lwjgl.vulkan.VkImageCopy;
 import org.lwjgl.vulkan.VkImageMemoryBarrier;
+import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkSubmitInfo;
 import static org.lwjgl.opengl.EXTSemaphore.GL_LAYOUT_TRANSFER_DST_EXT;
@@ -82,10 +84,36 @@ public final class BridgeRoundTrip implements AutoCloseable
 		this.queue = vulkan.queue();
 	}
 
-	/** The output image's GL framebuffer, to present after {@link #run}. */
+	/** Diagnostic modes, to find which half of the round trip fails. */
+	public enum Mode
+	{
+		/** Full round trip: GL writes input, Vulkan copies input to output, GL presents output. */
+		COPY("Copy"),
+		/** GL writes the shared input image and presents it directly; Vulkan is not used each frame. */
+		GL_ONLY("GL only"),
+		/** Vulkan clears the output to magenta each frame (input unused); GL presents output. */
+		VK_CLEAR("Vulkan clear");
+
+		private final String label;
+
+		Mode(String label)
+		{
+			this.label = label;
+		}
+
+		@Override
+		public String toString()
+		{
+			return label;
+		}
+	}
+
+	private Mode mode = Mode.COPY;
+
+	/** The GL framebuffer to present after {@link #run}: the output image, or the input image in GL-only mode. */
 	public int outputFbo()
 	{
-		return output.glFbo;
+		return mode == Mode.GL_ONLY ? input.glFbo : output.glFbo;
 	}
 
 	public long frames()
@@ -107,14 +135,15 @@ public final class BridgeRoundTrip implements AutoCloseable
 	 * S2-26: make sure the shared images exist at this size (recreated only when it changes).
 	 * Leaves GL framebuffer and texture bindings changed.
 	 */
-	public void ensure(int width, int height)
+	public void ensure(int width, int height, Mode mode)
 	{
-		if (output != null && output.width == width && output.height == height)
+		if (output != null && output.width == width && output.height == height && mode == this.mode)
 		{
 			return;
 		}
 
 		destroyImages();
+		this.mode = mode;
 		if (glDone == null)
 		{
 			glDone = SharedSemaphore.create(device);
@@ -136,7 +165,7 @@ public final class BridgeRoundTrip implements AutoCloseable
 		frameCommands = allocate();
 		recordFrame();
 		initialTransition();
-		log.debug("Bridge round trip images {}x{}", width, height);
+		log.debug("Bridge round trip images {}x{}, mode {}", width, height, mode);
 	}
 
 	/**
@@ -149,6 +178,12 @@ public final class BridgeRoundTrip implements AutoCloseable
 		glBindFramebuffer(GL_READ_FRAMEBUFFER, srcFbo);
 		glBindFramebuffer(GL_DRAW_FRAMEBUFFER, input.glFbo);
 		glBlitFramebuffer(0, 0, srcWidth, srcHeight, 0, 0, input.width, input.height, GL_COLOR_BUFFER_BIT, filter);
+		if (mode == Mode.GL_ONLY)
+		{
+			// Diagnostic: present the imported input image directly (tests GL writes/reads of Vulkan memory)
+			frames++;
+			return;
+		}
 
 		// GL -> Vulkan: images handed over in the layouts the Vulkan commands expect
 		int[] textures = {input.glTexture, output.glTexture};
@@ -209,12 +244,24 @@ public final class BridgeRoundTrip implements AutoCloseable
 			vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 				0, null, null, acquire);
 
-			VkImageCopy.Buffer region = VkImageCopy.calloc(1, stack);
-			region.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
-			region.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
-			region.extent().width(output.width).height(output.height).depth(1);
-			vkCmdCopyImage(frameCommands, input.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-				output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+			if (mode == Mode.VK_CLEAR)
+			{
+				// Diagnostic: solid magenta written only by Vulkan (tests GL reads of Vulkan writes)
+				VkClearColorValue magenta = VkClearColorValue.calloc(stack);
+				magenta.float32(0, 1f).float32(1, 0f).float32(2, 1f).float32(3, 1f);
+				VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+				range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+				vkCmdClearColorImage(frameCommands, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, magenta, range);
+			}
+			else
+			{
+				VkImageCopy.Buffer region = VkImageCopy.calloc(1, stack);
+				region.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
+				region.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
+				region.extent().width(output.width).height(output.height).depth(1);
+				vkCmdCopyImage(frameCommands, input.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+					output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+			}
 
 			// Release both images back to GL
 			VkImageMemoryBarrier.Buffer release = VkImageMemoryBarrier.calloc(2, stack);
