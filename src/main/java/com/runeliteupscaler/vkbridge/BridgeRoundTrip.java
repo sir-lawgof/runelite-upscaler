@@ -87,6 +87,8 @@ public final class BridgeRoundTrip implements AutoCloseable
 	private SharedImage input;
 	private SharedImage output;
 	private long frames;
+	/** frames since the current image set was created (probe schedule) */
+	private long framesInSet;
 
 	public BridgeRoundTrip(VulkanDevice vulkan)
 	{
@@ -159,6 +161,7 @@ public final class BridgeRoundTrip implements AutoCloseable
 
 		destroyImages();
 		this.mode = mode;
+		framesInSet = 0;
 		if (glDone == null)
 		{
 			glDone = SharedSemaphore.create(device);
@@ -197,6 +200,8 @@ public final class BridgeRoundTrip implements AutoCloseable
 		{
 			// Diagnostic: present the imported input image directly (tests GL writes/reads of Vulkan memory)
 			frames++;
+			framesInSet++;
+			probeIfDue();
 			return;
 		}
 
@@ -225,6 +230,8 @@ public final class BridgeRoundTrip implements AutoCloseable
 		// Vulkan -> GL: GPU-side wait; images come back in the layouts Vulkan left them in
 		glWaitSemaphoreEXT(vkDone.gl, NO_BUFFERS, textures, GL_LAYOUTS);
 		frames++;
+		framesInSet++;
+		probeIfDue();
 	}
 
 	private VkCommandBuffer allocate()
@@ -387,6 +394,144 @@ public final class BridgeRoundTrip implements AutoCloseable
 		b.subresourceRange().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
 	}
 
+	// ---- Diagnostic probe (test only; a CPU readback, which S2-25 forbids outside this test) ----
+
+	private static final int PROBE_EVERY = 120;
+	private long probeBuffer;
+	private long probeMemory;
+
+	/**
+	 * Every {@link #PROBE_EVERY} frames (and on the first frame of an image set), log the centre pixel of the input
+	 * and output images as GL sees them and as Vulkan sees them. Waits for both APIs, so only for diagnosis.
+	 */
+	private void probeIfDue()
+	{
+		if (framesInSet != 1 && framesInSet % PROBE_EVERY != 0)
+		{
+			return;
+		}
+		try
+		{
+			int cx = output.width / 2;
+			int cy = output.height / 2;
+			glFinish();
+			String glIn = glPixel(input.glFbo, cx, cy);
+			String glOut = glPixel(output.glFbo, cx, cy);
+			String[] vk = vkPixels(cx, cy);
+			log.info("Bridge probe: mode {}, frame {}: GL sees input {} output {}; Vulkan sees input {} output {}",
+				mode, frames, glIn, glOut, vk[0], vk[1]);
+		}
+		catch (RuntimeException ex)
+		{
+			log.warn("Bridge probe failed", ex);
+		}
+	}
+
+	private static String glPixel(int fbo, int x, int y)
+	{
+		try (MemoryStack stack = MemoryStack.stackPush())
+		{
+			java.nio.ByteBuffer px = stack.calloc(4);
+			glBindFramebuffer(GL_READ_FRAMEBUFFER, fbo);
+			glReadPixels(x, y, 1, 1, GL_RGBA, GL_UNSIGNED_BYTE, px);
+			return rgba(px, 0);
+		}
+	}
+
+	private static String rgba(java.nio.ByteBuffer b, int off)
+	{
+		return String.format("(%d,%d,%d,%d)", b.get(off) & 0xff, b.get(off + 1) & 0xff, b.get(off + 2) & 0xff,
+			b.get(off + 3) & 0xff);
+	}
+
+	/** Copy the centre pixel of both images to a host-visible buffer in Vulkan and read it. */
+	private String[] vkPixels(int x, int y)
+	{
+		vkDeviceWaitIdle(device);
+		try (MemoryStack stack = MemoryStack.stackPush())
+		{
+			if (probeBuffer == 0)
+			{
+				org.lwjgl.vulkan.VkBufferCreateInfo bci = org.lwjgl.vulkan.VkBufferCreateInfo.calloc(stack)
+					.sType$Default()
+					.size(8)
+					.usage(VK_BUFFER_USAGE_TRANSFER_DST_BIT)
+					.sharingMode(VK_SHARING_MODE_EXCLUSIVE);
+				LongBuffer lp = stack.mallocLong(1);
+				SharedImage.check(vkCreateBuffer(device, bci, null, lp), "vkCreateBuffer");
+				probeBuffer = lp.get(0);
+				org.lwjgl.vulkan.VkMemoryRequirements req = org.lwjgl.vulkan.VkMemoryRequirements.malloc(stack);
+				vkGetBufferMemoryRequirements(device, probeBuffer, req);
+				org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties props =
+					org.lwjgl.vulkan.VkPhysicalDeviceMemoryProperties.malloc(stack);
+				vkGetPhysicalDeviceMemoryProperties(device.getPhysicalDevice(), props);
+				int want = VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+				int type = -1;
+				for (int i = 0; i < props.memoryTypeCount(); i++)
+				{
+					if ((req.memoryTypeBits() & (1 << i)) != 0 && (props.memoryTypes(i).propertyFlags() & want) == want)
+					{
+						type = i;
+						break;
+					}
+				}
+				org.lwjgl.vulkan.VkMemoryAllocateInfo mai = org.lwjgl.vulkan.VkMemoryAllocateInfo.calloc(stack)
+					.sType$Default()
+					.allocationSize(req.size())
+					.memoryTypeIndex(type);
+				SharedImage.check(vkAllocateMemory(device, mai, null, lp), "vkAllocateMemory");
+				probeMemory = lp.get(0);
+				SharedImage.check(vkBindBufferMemory(device, probeBuffer, probeMemory, 0), "vkBindBufferMemory");
+			}
+
+			VkCommandBuffer cb = allocate();
+			VkCommandBufferBeginInfo bi = VkCommandBufferBeginInfo.calloc(stack)
+				.sType$Default()
+				.flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+			SharedImage.check(vkBeginCommandBuffer(cb, bi), "vkBeginCommandBuffer");
+			VkImageMemoryBarrier.Buffer b = VkImageMemoryBarrier.calloc(2, stack);
+			barrier(b.get(0), input.image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+			barrier(b.get(1), output.image, VK_ACCESS_MEMORY_WRITE_BIT, VK_ACCESS_TRANSFER_READ_BIT,
+				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL, VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, 0, null, null, b);
+			org.lwjgl.vulkan.VkBufferImageCopy.Buffer region = org.lwjgl.vulkan.VkBufferImageCopy.calloc(1, stack);
+			region.imageSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
+			region.imageOffset().set(x, y, 0);
+			region.imageExtent().set(1, 1, 1);
+			region.bufferOffset(0);
+			vkCmdCopyImageToBuffer(cb, input.image, VK_IMAGE_LAYOUT_GENERAL, probeBuffer, region);
+			region.bufferOffset(4);
+			vkCmdCopyImageToBuffer(cb, output.image, VK_IMAGE_LAYOUT_GENERAL, probeBuffer, region);
+			SharedImage.check(vkEndCommandBuffer(cb), "vkEndCommandBuffer");
+			VkSubmitInfo si = VkSubmitInfo.calloc(stack).sType$Default().pCommandBuffers(stack.pointers(cb));
+			SharedImage.check(vkQueueSubmit(queue, si, VK_NULL_HANDLE), "vkQueueSubmit");
+			vkQueueWaitIdle(queue);
+			vkFreeCommandBuffers(device, commandPool, cb);
+
+			org.lwjgl.PointerBuffer pp = stack.mallocPointer(1);
+			SharedImage.check(vkMapMemory(device, probeMemory, 0, 8, 0, pp), "vkMapMemory");
+			java.nio.ByteBuffer data = org.lwjgl.system.MemoryUtil.memByteBuffer(pp.get(0), 8);
+			String[] out = {rgba(data, 0), rgba(data, 4)};
+			vkUnmapMemory(device, probeMemory);
+			return out;
+		}
+	}
+
+	private void destroyProbe()
+	{
+		if (probeBuffer != 0)
+		{
+			vkDestroyBuffer(device, probeBuffer, null);
+			probeBuffer = 0;
+		}
+		if (probeMemory != 0)
+		{
+			vkFreeMemory(device, probeMemory, null);
+			probeMemory = 0;
+		}
+	}
+
 	private void destroyImages()
 	{
 		if (input == null && output == null)
@@ -418,6 +563,7 @@ public final class BridgeRoundTrip implements AutoCloseable
 	{
 		destroyImages();
 		vkDeviceWaitIdle(device);
+		destroyProbe();
 		if (glDone != null)
 		{
 			glDone.close();
