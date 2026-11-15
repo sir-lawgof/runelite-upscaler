@@ -13,11 +13,16 @@ repositories {
 	mavenCentral()
 }
 
-def runeLiteVersion = 'latest.release'
-def pluginMainClass = 'com.example.ExamplePluginTest'
+def runeLiteVersion = '1.13.6' // G-14: pinned to the forked upstream release, see docs/UPSTREAM.md
+def pluginMainClass = 'com.runeliteupscaler.UpscalerPluginTest'
 
 dependencies {
 	compileOnly group: 'net.runelite', name:'client', version: runeLiteVersion
+
+	// S2-27, Q-02: RuneLite ships LWJGL 3.3.2 core/opengl/opencl but not the Vulkan bindings, so bundle them.
+	// Same version as RuneLite's core; not transitive, so the core comes only from RuneLite. On Windows/Linux this
+	// is Java bindings only (it loads the system Vulkan loader).
+	implementation('org.lwjgl:lwjgl-vulkan:3.3.2') { transitive = false }
 
 	compileOnly 'org.projectlombok:lombok:1.18.30'
 	annotationProcessor 'org.projectlombok:lombok:1.18.30'
@@ -27,7 +32,7 @@ dependencies {
 	testImplementation group: 'net.runelite', name:'jshell', version: runeLiteVersion
 }
 
-group = 'com.example'
+group = 'com.runeliteupscaler'
 
 tasks.withType(JavaCompile).configureEach {
 	options.encoding = 'UTF-8'

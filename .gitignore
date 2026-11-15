@@ -8,3 +8,33 @@ nbactions.xml
 nb-configuration.xml
 nbproject/
 *.class
+# Build output
+build/
+out/
+.gradle/
+native/build/
+cmake-build-*/
+
+# Native binaries
+*.dll
+*.so
+*.dylib
+*.lib
+*.exp
+*.pdb
+
+# IDE
+.idea/
+*.iml
+
+# Secrets / RuneLite session, profile and cache files
+credentials.properties
+*.session
+.runelite/
+profiles/
+profiles2/
+jagexcache/
+
+# OS
+Thumbs.db
+.DS_Store
