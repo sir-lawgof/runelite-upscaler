@@ -39,8 +39,7 @@ import org.lwjgl.vulkan.VkImageMemoryBarrier;
 import org.lwjgl.vulkan.VkImageSubresourceRange;
 import org.lwjgl.vulkan.VkQueue;
 import org.lwjgl.vulkan.VkSubmitInfo;
-import static org.lwjgl.opengl.EXTSemaphore.GL_LAYOUT_TRANSFER_DST_EXT;
-import static org.lwjgl.opengl.EXTSemaphore.GL_LAYOUT_TRANSFER_SRC_EXT;
+import static org.lwjgl.opengl.EXTSemaphore.GL_LAYOUT_GENERAL_EXT;
 import static org.lwjgl.opengl.EXTSemaphore.glSignalSemaphoreEXT;
 import static org.lwjgl.opengl.EXTSemaphore.glWaitSemaphoreEXT;
 import static org.lwjgl.opengl.GL33C.*;
@@ -62,8 +61,11 @@ import static org.lwjgl.vulkan.VK10.*;
 public final class BridgeRoundTrip implements AutoCloseable
 {
 	private static final int[] NO_BUFFERS = new int[0];
-	/** GL layouts matching the Vulkan layouts the images keep between frames */
-	private static final int[] GL_LAYOUTS = {GL_LAYOUT_TRANSFER_SRC_EXT, GL_LAYOUT_TRANSFER_DST_EXT};
+	/**
+	 * GL layouts matching the Vulkan layout the images keep between frames. GENERAL on both sides: with
+	 * TRANSFER_SRC/DST the round trip read black from GL-written images on NVIDIA (8.4).
+	 */
+	private static final int[] GL_LAYOUTS = {GL_LAYOUT_GENERAL_EXT, GL_LAYOUT_GENERAL_EXT};
 
 	/**
 	 * Images GL writes and Vulkan reads: no STORAGE usage. With STORAGE, NVIDIA Vulkan lays the image out without
@@ -245,10 +247,10 @@ public final class BridgeRoundTrip implements AutoCloseable
 			// Acquire both images from GL (external queue family); layouts unchanged
 			VkImageMemoryBarrier.Buffer acquire = VkImageMemoryBarrier.calloc(2, stack);
 			barrier(acquire.get(0), input.image, 0, VK_ACCESS_TRANSFER_READ_BIT,
-				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 				VK_QUEUE_FAMILY_EXTERNAL, vulkan.queueFamily());
 			barrier(acquire.get(1), output.image, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 				VK_QUEUE_FAMILY_EXTERNAL, vulkan.queueFamily());
 			// srcStage must be the stage the glDone wait blocks (TRANSFER), so the acquire is chained after GL's work.
 			// With TOP_OF_PIPE it could run before GL finished, and the copy read black (8.4).
@@ -262,14 +264,14 @@ public final class BridgeRoundTrip implements AutoCloseable
 			magenta.float32(0, 1f).float32(1, 0f).float32(2, 1f).float32(3, 1f);
 			VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
 			range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
-			vkCmdClearColorImage(frameCommands, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, magenta, range);
+			vkCmdClearColorImage(frameCommands, output.image, VK_IMAGE_LAYOUT_GENERAL, magenta, range);
 
 			if (mode != Mode.VK_CLEAR)
 			{
 				// Clear before copy: both write the output in the transfer stage
 				VkImageMemoryBarrier.Buffer afterClear = VkImageMemoryBarrier.calloc(1, stack);
 				barrier(afterClear.get(0), output.image, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
-					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+					VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 					VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
 				vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 					0, null, null, afterClear);
@@ -278,17 +280,17 @@ public final class BridgeRoundTrip implements AutoCloseable
 				region.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
 				region.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
 				region.extent().width(output.width).height(output.height).depth(1);
-				vkCmdCopyImage(frameCommands, input.image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
-					output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, region);
+				vkCmdCopyImage(frameCommands, input.image, VK_IMAGE_LAYOUT_GENERAL,
+					output.image, VK_IMAGE_LAYOUT_GENERAL, region);
 			}
 
 			// Release both images back to GL
 			VkImageMemoryBarrier.Buffer release = VkImageMemoryBarrier.calloc(2, stack);
 			barrier(release.get(0), input.image, VK_ACCESS_TRANSFER_READ_BIT, 0,
-				VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
 			barrier(release.get(1), output.image, VK_ACCESS_TRANSFER_WRITE_BIT, 0,
-				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_GENERAL,
 				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
 			vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 				0, null, null, release);
@@ -311,9 +313,9 @@ public final class BridgeRoundTrip implements AutoCloseable
 				.flags(VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
 			SharedImage.check(vkBeginCommandBuffer(cb, bi), "vkBeginCommandBuffer");
 			VkImageMemoryBarrier.Buffer b = VkImageMemoryBarrier.calloc(2, stack);
-			barrier(b.get(0), input.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+			barrier(b.get(0), input.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
 				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
-			barrier(b.get(1), output.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+			barrier(b.get(1), output.image, 0, 0, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_GENERAL,
 				vulkan.queueFamily(), VK_QUEUE_FAMILY_EXTERNAL);
 			vkCmdPipelineBarrier(cb, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_BOTTOM_OF_PIPE_BIT,
 				0, null, null, b);
