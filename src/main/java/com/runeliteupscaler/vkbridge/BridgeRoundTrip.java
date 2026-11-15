@@ -241,20 +241,30 @@ public final class BridgeRoundTrip implements AutoCloseable
 			barrier(acquire.get(1), output.image, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
 				VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
 				VK_QUEUE_FAMILY_EXTERNAL, vulkan.queueFamily());
-			vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+			// srcStage must be the stage the glDone wait blocks (TRANSFER), so the acquire is chained after GL's work.
+			// With TOP_OF_PIPE it could run before GL finished, and the copy read black (8.4).
+			vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
 				0, null, null, acquire);
 
-			if (mode == Mode.VK_CLEAR)
+			// Solid magenta written only by Vulkan. Vulkan-clear mode stops here (tests GL reads of Vulkan writes);
+			// copy mode copies the input over it, so magenta on screen means the copy didn't happen, black means it
+			// read black, and a normal image means it worked (old memory contents can't pass for a working copy).
+			VkClearColorValue magenta = VkClearColorValue.calloc(stack);
+			magenta.float32(0, 1f).float32(1, 0f).float32(2, 1f).float32(3, 1f);
+			VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
+			range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
+			vkCmdClearColorImage(frameCommands, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, magenta, range);
+
+			if (mode != Mode.VK_CLEAR)
 			{
-				// Diagnostic: solid magenta written only by Vulkan (tests GL reads of Vulkan writes)
-				VkClearColorValue magenta = VkClearColorValue.calloc(stack);
-				magenta.float32(0, 1f).float32(1, 0f).float32(2, 1f).float32(3, 1f);
-				VkImageSubresourceRange.Buffer range = VkImageSubresourceRange.calloc(1, stack);
-				range.get(0).aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).baseMipLevel(0).levelCount(1).baseArrayLayer(0).layerCount(1);
-				vkCmdClearColorImage(frameCommands, output.image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, magenta, range);
-			}
-			else
-			{
+				// Clear before copy: both write the output in the transfer stage
+				VkImageMemoryBarrier.Buffer afterClear = VkImageMemoryBarrier.calloc(1, stack);
+				barrier(afterClear.get(0), output.image, VK_ACCESS_TRANSFER_WRITE_BIT, VK_ACCESS_TRANSFER_WRITE_BIT,
+					VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+					VK_QUEUE_FAMILY_IGNORED, VK_QUEUE_FAMILY_IGNORED);
+				vkCmdPipelineBarrier(frameCommands, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+					0, null, null, afterClear);
+
 				VkImageCopy.Buffer region = VkImageCopy.calloc(1, stack);
 				region.srcSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
 				region.dstSubresource().aspectMask(VK_IMAGE_ASPECT_COLOR_BIT).mipLevel(0).baseArrayLayer(0).layerCount(1);
