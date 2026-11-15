@@ -396,17 +396,16 @@ public final class BridgeRoundTrip implements AutoCloseable
 
 	// ---- Diagnostic probe (test only; a CPU readback, which S2-25 forbids outside this test) ----
 
-	private static final int PROBE_EVERY = 120;
 	private long probeBuffer;
 	private long probeMemory;
 
 	/**
-	 * Every {@link #PROBE_EVERY} frames (and on the first frame of an image set), log the centre pixel of the input
+	 * On the first frame of each image set (after creation or resize), log the centre pixel of the input
 	 * and output images as GL sees them and as Vulkan sees them. Waits for both APIs, so only for diagnosis.
 	 */
 	private void probeIfDue()
 	{
-		if (framesInSet != 1 && framesInSet % PROBE_EVERY != 0)
+		if (framesInSet != 1)
 		{
 			return;
 		}
